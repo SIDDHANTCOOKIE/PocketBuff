@@ -140,3 +140,51 @@ describe('static routing', () => {
     expect((await fetch(`http://127.0.0.1:${port}/%2e%2e/%2e%2e/etc/passwd`)).status).toBe(404)
   })
 })
+
+describe('remote-control continuity', () => {
+  it('keeps a run alive across a disconnect and replays the pending approval', async () => {
+    const runtime = { name: 'mock' as const, async run(_prompt: string, handlers: import('./runtime').RuntimeHandlers) {
+      handlers.chunk('before approval ')
+      const allowed = await handlers.approve?.('write_file', { path: 'a' }, 'needs approval')
+      handlers.chunk('after')
+      return { allowed }
+    } }
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fbr-cont-'))
+    const app = createCompanionServer({ runtime, token: 't', stateDir: dir })
+    apps.push(app)
+    const { port } = await app.listen(0)
+    const first = new WebSocket(`ws://127.0.0.1:${port}/ws?token=t`)
+    await new Promise<void>((resolve) => first.on('message', (raw) => { const m = JSON.parse(raw.toString()); if (m.type === 'ready') first.send(JSON.stringify({ type: 'chat', sessionId: m.activeSessionId, text: 'go' })); if (m.type === 'approval-request') resolve() }))
+    first.terminate()
+    const second = new WebSocket(`ws://127.0.0.1:${port}/ws?token=t`)
+    const seen: Array<Record<string, any>> = []
+    const output = await new Promise<unknown>((resolve) => second.on('message', (raw) => {
+      const m = JSON.parse(raw.toString()); seen.push(m)
+      if (m.type === 'approval-request') second.send(JSON.stringify({ type: 'approval', sessionId: m.sessionId, requestId: m.requestId, decision: 'approve' }))
+      if (m.type === 'run-finish') resolve(m.output)
+    }))
+    expect(output).toEqual({ allowed: true })
+    expect(seen.map((m) => m.type).slice(0, 5)).toEqual(['ready', 'user', 'run-start', 'chunk', 'approval-request'])
+    second.close()
+  })
+
+  it('marks approvals left open by a cancel as denied in the replay', async () => {
+    const runtime = { name: 'mock' as const, async run(_prompt: string, handlers: import('./runtime').RuntimeHandlers) {
+      return { allowed: await handlers.approve?.('write_file', { path: 'a' }, 'needs approval') }
+    } }
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fbr-cancel-'))
+    const app = createCompanionServer({ runtime, token: 't', stateDir: dir })
+    apps.push(app)
+    const { port } = await app.listen(0)
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=t`)
+    const seen: Array<Record<string, any>> = []
+    await new Promise<void>((resolve) => ws.on('message', (raw) => {
+      const m = JSON.parse(raw.toString()); seen.push(m)
+      if (m.type === 'ready') ws.send(JSON.stringify({ type: 'chat', sessionId: m.activeSessionId, text: 'go' }))
+      if (m.type === 'approval-request') ws.send(JSON.stringify({ type: 'cancel', sessionId: m.sessionId }))
+      if (m.type === 'approval-resolved') resolve()
+    }))
+    expect(seen.find((m) => m.type === 'approval-resolved')?.decision).toBe('deny')
+    ws.close()
+  })
+})

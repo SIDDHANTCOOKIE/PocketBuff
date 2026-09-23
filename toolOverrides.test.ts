@@ -76,3 +76,15 @@ describe('SDK-shaped edits through the approval gate', () => {
     expect(JSON.stringify(await overrides.write_file({ type: 'file', path: '../escape.txt', content: 'x' }))).toContain('out-of-project')
   })
 })
+
+describe('validation before approval', () => {
+  it('rejects out-of-project requests without asking the phone', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fbr-'))
+    let asked = 0
+    const overrides = createToolOverrides(dir, async () => { asked++; return true })
+    await overrides.run_terminal_command({ command: 'pwd', cwd: '../..', process_type: 'SYNC', timeout_seconds: 5 })
+    await overrides.write_file({ type: 'file', path: '../x', content: 'x' })
+    await overrides.write_file({ operation: { type: 'delete_file', path: 'a' } })
+    expect(asked).toBe(0)
+  })
+})

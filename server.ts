@@ -13,7 +13,7 @@ import { SessionManager } from './session.js'
 import type { ClientMessage, ServerMessage, ToolCard } from './protocol.js'
 
 export interface ServerOptions { port?: number; host?: string; projectDir?: string; token?: string; runtime?: ChatRuntime; staticDir?: string; stateDir?: string }
-type RunContext = { abort: AbortController; approvals: ApprovalGate; tools: Map<string, ToolCard> }
+type RunContext = { abort: AbortController; approvals: ApprovalGate; tools: Map<string, ToolCard>; pending: Set<string> }
 const HISTORY_LIMIT = 2000
 
 function send(socket: WebSocket, value: ServerMessage) { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)) }
@@ -32,7 +32,9 @@ export function createCompanionServer(options: ServerOptions = {}) {
   const clients = new Set<WebSocket>()
   const emit = (sessionId: string, value: ServerMessage) => {
     const log = history.get(sessionId) ?? []; const last = log.at(-1)
-    if (value.type === 'chunk' && last?.type === 'chunk' && typeof value.chunk === 'string' && typeof last.chunk === 'string') log[log.length - 1] = { ...last, chunk: last.chunk + value.chunk }; else log.push(value); if (log.length > HISTORY_LIMIT) log.splice(0, log.length - HISTORY_LIMIT); history.set(sessionId, log)
+    // Subagent/reasoning chunks are not rendered, so keep them out of the replay log where they would evict the transcript.
+    if (value.type === 'chunk' && typeof value.chunk !== 'string') { for (const client of clients) send(client, value); return }
+    if (value.type === 'chunk' && last?.type === 'chunk' && typeof last.chunk === 'string') log[log.length - 1] = { ...last, chunk: last.chunk + (value.chunk as string) }; else log.push(value); if (log.length > HISTORY_LIMIT) log.splice(0, log.length - HISTORY_LIMIT); history.set(sessionId, log)
     for (const client of clients) send(client, value)
   }
 
@@ -69,22 +71,23 @@ export function createCompanionServer(options: ServerOptions = {}) {
       if (message.type === 'session-delete') { if (activeRuns.has(message.sessionId)) { send(socket, { type: 'error', message: 'Cannot delete a running session' }); return }; sessions.delete(message.sessionId); history.delete(message.sessionId); activeSessionId = sessions.list()[0]?.id ?? sessions.create('Project', defaultProjectDir).id; sessionUpdate(); return }
       const session = sessions.get(message.sessionId)
       if (!session) { send(socket, { type: 'error', message: 'Unknown session' }); return }
-      if (message.type === 'approval') { const run = activeRuns.get(session.id); if (!run?.approvals.resolve(message.requestId, message.decision)) send(socket, { type: 'error', sessionId: session.id, message: 'Unknown approval request' }); else emit(session.id, { type: 'approval-resolved', sessionId: session.id, requestId: message.requestId, decision: message.decision }); return }
+      if (message.type === 'approval') { const run = activeRuns.get(session.id); if (!run?.approvals.resolve(message.requestId, message.decision)) send(socket, { type: 'error', sessionId: session.id, message: 'Unknown approval request' }); else { run.pending.delete(message.requestId); emit(session.id, { type: 'approval-resolved', sessionId: session.id, requestId: message.requestId, decision: message.decision }) }; return }
       if (message.type === 'cancel') { const run = activeRuns.get(session.id); if (!run) return; run.abort.abort(); run.approvals.clear(); emit(session.id, { type: 'run-cancelled', sessionId: session.id }); return }
       if (message.type !== 'chat' || !message.text.trim()) { send(socket, { type: 'error', message: 'Expected a non-empty chat message' }); return }
       if (activeRuns.has(session.id)) { send(socket, { type: 'error', sessionId: session.id, message: 'This session already has a run in progress' }); return }
-      const run: RunContext = { abort: new AbortController(), approvals: new ApprovalGate(), tools: new Map() }; activeRuns.set(session.id, run)
+      const run: RunContext = { abort: new AbortController(), approvals: new ApprovalGate(), tools: new Map(), pending: new Set() }; activeRuns.set(session.id, run)
       emit(session.id, { type: 'user', sessionId: session.id, text: message.text.trim() })
       emit(session.id, { type: 'run-start', sessionId: session.id })
       try {
         const output = await session.runtime.run(message.text.trim(), {
           event: (event) => { for (const item of messagesForEvent(event, run.tools)) emit(session.id, { ...item, sessionId: session.id } as ServerMessage) },
           chunk: (chunk) => emit(session.id, { type: 'chunk', sessionId: session.id, chunk }), signal: run.abort.signal,
-          approve: async (toolName, input, reason) => { const { decision } = run.approvals.request(crypto.randomUUID(), toolName, input, reason, (request) => emit(session.id, { type: 'approval-request', sessionId: session.id, ...request })); return await decision === 'approve' },
+          approve: async (toolName, input, reason) => { const { decision } = run.approvals.request(crypto.randomUUID(), toolName, input, reason, (request) => { run.pending.add(request.requestId); emit(session.id, { type: 'approval-request', sessionId: session.id, ...request }) }); return await decision === 'approve' },
         })
         sessions.touch(session.id); emit(session.id, { type: 'run-finish', sessionId: session.id, output }); sessionUpdate()
       } catch (error) { if (!run.abort.signal.aborted) { emit(session.id, { type: 'error', sessionId: session.id, message: error instanceof Error ? error.message : String(error) }); emit(session.id, { type: 'run-finish', sessionId: session.id, output: null }) } }
-      finally { run.approvals.clear(); activeRuns.delete(session.id) }
+      // Approvals left open by a cancel or failure are resolved as denied so replayed cards do not keep live buttons.
+      finally { run.approvals.clear(); for (const requestId of run.pending) emit(session.id, { type: 'approval-resolved', sessionId: session.id, requestId, decision: 'deny' }); activeRuns.delete(session.id) }
     })
     // Runs keep going when a phone disconnects; reconnecting clients get the replayed transcript and can approve or cancel.
     socket.on('close', () => { clients.delete(socket) })
