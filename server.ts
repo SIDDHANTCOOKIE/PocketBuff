@@ -12,6 +12,7 @@ import { CodebuffRuntime, MockRuntime, defaultSlotClient, releaseSharedSlot } fr
 import { readFreebuffToken } from './auth.js'
 import { SessionManager } from './session.js'
 import { listCliChats, readCliTranscript } from './cliChats.js'
+import { redeemPairingCode } from './pair.js'
 import type { ClientMessage, ServerMessage, ToolCard } from './protocol.js'
 
 export interface ServerOptions { port?: number; host?: string; projectDir?: string; token?: string; runtime?: ChatRuntime; staticDir?: string; stateDir?: string }
@@ -35,13 +36,22 @@ function isClientMessage(value: unknown): value is ClientMessage {
 }
 function safeEqual(a: string, b: string) { const aa = Buffer.from(a); const bb = Buffer.from(b); return aa.length === bb.length && crypto.timingSafeEqual(aa, bb) }
 
+/** Reads the Freebuff login on first use, so the service can start (and pair a phone) before `freebuff` has been logged in. */
+function lazyCodebuffRuntime(projectDir: string, checkpointFile: string, stateDir: string): ChatRuntime {
+  let runtime: CodebuffRuntime | undefined
+  return { name: 'codebuff', run(prompt, handlers, options) {
+    if (!runtime) { const token = readFreebuffToken(); runtime = new CodebuffRuntime(projectDir, token, checkpointFile, defaultSlotClient(token, stateDir)) }
+    return runtime.run(prompt, handlers, options)
+  } }
+}
+
 export function createCompanionServer(options: ServerOptions = {}) {
   const defaultProjectDir = path.resolve(options.projectDir || process.env.FREEBUFF_PROJECT_DIR || process.cwd())
   const token = options.token ?? process.env.FREEBUFF_REMOTE_TOKEN ?? ''
   const staticDir = options.staticDir ?? path.resolve('dist/client')
-  const stateDir = options.stateDir ?? path.join(os.homedir(), '.config', 'freebuff-remote')
+  const stateDir = options.stateDir ?? process.env.FREEBUFF_REMOTE_STATE_DIR ?? path.join(os.homedir(), '.config', 'freebuff-remote')
   const mock = options.runtime?.name === 'mock' || process.env.FREEBUFF_REMOTE_MOCK === '1'
-  const sessions = new SessionManager(path.join(stateDir, 'sessions.json'), (projectDir, id) => { if (options.runtime) return options.runtime; if (mock) return new MockRuntime(); const token = readFreebuffToken(); return new CodebuffRuntime(projectDir, token, path.join(stateDir, 'sessions', `${id}.json`), defaultSlotClient(token, stateDir)) }, defaultProjectDir)
+  const sessions = new SessionManager(path.join(stateDir, 'sessions.json'), (projectDir, id) => { if (options.runtime) return options.runtime; if (mock) return new MockRuntime(); return lazyCodebuffRuntime(projectDir, path.join(stateDir, 'sessions', `${id}.json`), stateDir) }, defaultProjectDir)
   // An explicitly configured project folder wins over whatever session was saved last, so a new FREEBUFF_PROJECT_DIR is not silently ignored.
   const explicitProject = options.projectDir || process.env.FREEBUFF_PROJECT_DIR ? sessions.ensure(defaultProjectDir).id : undefined
   const activeRuns = new Map<string, RunContext>()
@@ -62,6 +72,21 @@ export function createCompanionServer(options: ServerOptions = {}) {
     let pathname = '/'
     try { pathname = decodeURIComponent(new URL(req.url || '/', 'http://localhost').pathname) } catch { res.writeHead(400); res.end('Bad request'); return }
     if (pathname === '/healthz') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, runtime: mock ? 'mock' : 'codebuff', sessions: sessions.list().length })); return }
+    // Pairing: a phone trades a one-time 6-digit code for the long-lived token (codes come from `install.sh pair`).
+    if (pathname === '/pair') {
+      if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return }
+      let body = ''
+      req.setEncoding('utf8')
+      req.on('data', (chunk: string) => { body += chunk; if (body.length > 1024) req.destroy() })
+      req.on('end', () => {
+        let code = ''
+        try { code = String((JSON.parse(body) as { code?: unknown }).code ?? '') } catch { /* treated as a wrong code */ }
+        const ok = !!token && /^\d{6}$/.test(code) && redeemPairingCode(code, stateDir)
+        res.writeHead(ok ? 200 : 401, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+        res.end(JSON.stringify(ok ? { token } : { error: 'That code is wrong or expired. Run the pair command again for a new one.' }))
+      })
+      return
+    }
     const requestPath = pathname === '/' ? 'index.html' : pathname.replace(/^\//, '')
     const resolved = path.resolve(staticDir, requestPath)
     if ((resolved !== path.resolve(staticDir) && !resolved.startsWith(path.resolve(staticDir) + path.sep)) || !fs.existsSync(resolved)) { res.writeHead(404); res.end('Not found'); return }

@@ -2,6 +2,39 @@
 
 M1 spike for controlling a local Freebuff coding-agent runtime from a phone or web browser. It embeds Codebuff's Apache-2.0 SDK, reuses the login created by the Freebuff CLI, and exposes its event/chunk stream over a small WebSocket protocol. It does **not** PTY-wrap the TUI and it does not require a separate paid SDK key.
 
+## Install (one link)
+
+Paste this into Freebuff on the computer you want to control, and it does the setup:
+
+```
+Read https://<your-site>/install.md and follow it
+```
+
+Or run the installer yourself: `curl -fsSL https://<your-site>/install.sh | bash -s -- --yes`. The `site/` folder is the whole website (static, deploy it to Vercel as is). Afterwards: `bash ~/.pocketbuff/install.sh doctor | pair | uninstall`.
+
+### Deploy the site (Vercel CLI + GitHub Actions)
+
+`site/` is deployed by `.github/workflows/deploy-site.yml` on every push to `main` that touches `site/**`. You can also run it by hand from the Actions tab (Vercel Production Deployment > Run workflow).
+
+Why this route: Vercel's free Hobby plan doesn't let several people deploy to one project (collaborators are a paid Team feature). A token plus GitHub Actions lets any push to `main` deploy without anyone joining a Vercel team.
+
+> Do **not** import or connect this repo in the Vercel dashboard. The Vercel Git integration must stay off; GitHub Actions does the deploys.
+
+One-time setup (about 2 minutes):
+
+1. **Token:** create one at https://vercel.com/account/tokens and copy it.
+2. **Login:** `npm i -g vercel` then `vercel login`.
+3. **Link:** from the repo root, `cd site && vercel project add pocketbuff && vercel link --yes --project pocketbuff && cd ..` (skip `project add` if the project already exists). This creates `site/.vercel/project.json` (git-ignored) with `orgId` and `projectId`.
+4. **Secrets:**
+   ```sh
+   gh secret set VERCEL_TOKEN --repo SIDDHANTCOOKIE/freebuff-remote-control        # paste the token when asked
+   gh secret set VERCEL_ORG_ID --repo SIDDHANTCOOKIE/freebuff-remote-control --body "$(jq -r .orgId site/.vercel/project.json)"
+   gh secret set VERCEL_PROJECT_ID --repo SIDDHANTCOOKIE/freebuff-remote-control --body "$(jq -r .projectId site/.vercel/project.json)"
+   ```
+5. **Deploy:** push to `main` (or run the workflow once by hand). The run summary shows the production URL.
+
+Manual alternative, without Actions: `bash scripts/deploy-site.sh`. It links on the first run and then runs `vercel deploy --prod`. It uses `VERCEL_TOKEN` when set (fully unattended), otherwise your `vercel login` session.
+
 ## What M1 includes
 
 - Bun/TypeScript-friendly companion server (also runs on Node 22)
