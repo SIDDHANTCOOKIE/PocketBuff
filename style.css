@@ -10,3 +10,6 @@ article { max-width: 88%; white-space: pre-wrap; line-height: 1.5; border-radius
 form { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding-bottom: env(safe-area-inset-bottom); }
 textarea { resize: none; border: 1px solid #343843; background: #191b20; color: inherit; border-radius: 12px; padding: 12px; font: inherit; }
 button { border: 0; border-radius: 12px; padding: 0 18px; color: white; background: #4754d6; font-weight: 600; } button:disabled { opacity: .5; }
+.card { max-width: 100%; border: 1px solid #343843; background: #17191e; }
+.card strong { display: block; }.card small { color: #9ca3af; }.card pre { white-space: pre-wrap; overflow-wrap: anywhere; color: #c9cdd6; }
+.card div { display: flex; gap: 8px; }.card button { padding: 8px 12px; }.deny,.cancel { background: #7f1d1d; }.cancel { padding: 10px; }

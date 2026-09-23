@@ -5,6 +5,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, WebSocket } from 'ws'
 import { CodebuffRuntime, MockRuntime, type ChatRuntime } from './runtime.js'
+import { ApprovalGate } from './approval.js'
+import { messagesForEvent } from './events.js'
+import type { ToolCard } from './protocol.js'
 import type { ClientMessage, ServerMessage } from './protocol.js'
 
 export interface ServerOptions {
@@ -32,6 +35,9 @@ export function createCompanionServer(options: ServerOptions = {}) {
   const staticDir = options.staticDir ?? path.resolve('dist/client')
   const runtime = options.runtime ?? (process.env.FREEBUFF_REMOTE_MOCK === '1' ? new MockRuntime() : new CodebuffRuntime(projectDir))
   let running = false
+  let abortController: AbortController | null = null
+  const approvals = new ApprovalGate()
+  const tools = new Map<string, ToolCard>()
 
   const server = http.createServer((req, res) => {
     if (req.url === '/healthz') {
@@ -64,21 +70,36 @@ export function createCompanionServer(options: ServerOptions = {}) {
       let message: ClientMessage
       try { message = JSON.parse(raw.toString()) as ClientMessage } catch { send(socket, { type: 'error', message: 'Invalid JSON' }); return }
       if (message.type === 'ping') { send(socket, { type: 'pong' }); return }
+      if (message.type === 'approval') {
+        if (!approvals.resolve(message.requestId, message.decision)) send(socket, { type: 'error', message: 'Unknown approval request' })
+        else send(socket, { type: 'approval-resolved', requestId: message.requestId, decision: message.decision })
+        return
+      }
+      if (message.type === 'cancel') { abortController?.abort(); approvals.clear(); send(socket, { type: 'run-cancelled' }); return }
       if (message.type !== 'chat' || typeof message.text !== 'string' || !message.text.trim()) {
         send(socket, { type: 'error', message: 'Expected a non-empty chat message' }); return
       }
       if (running) { send(socket, { type: 'error', message: 'A run is already in progress' }); return }
       running = true
+      abortController = new AbortController()
+      tools.clear()
       send(socket, { type: 'run-start' })
       try {
         const output = await runtime.run(message.text.trim(), {
-          event: (event) => send(socket, { type: 'event', event }),
+          event: (event) => {
+            for (const message of messagesForEvent(event, tools)) send(socket, message)
+          },
           chunk: (chunk) => send(socket, { type: 'chunk', chunk }),
+          signal: abortController.signal,
+          approve: async (toolName, input, reason) => {
+            const { decision } = approvals.request(crypto.randomUUID(), toolName, input, reason, (request) => send(socket, { type: 'approval-request', ...request }))
+            return await decision === 'approve'
+          },
         })
         send(socket, { type: 'run-finish', output })
       } catch (error) {
         send(socket, { type: 'error', message: error instanceof Error ? error.message : String(error) })
-      } finally { running = false }
+      } finally { running = false; abortController = null; approvals.clear() }
     })
   })
 
