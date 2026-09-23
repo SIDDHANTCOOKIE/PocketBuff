@@ -25,7 +25,7 @@ export function createToolOverrides(projectDir: string, guarded: Guard, signal?:
       const relative = typeof input.path === 'string' ? input.path : ''
       const target = path.resolve(root, relative)
       if (!relative || !inside(root, target) || target === root || typeof input.content !== 'string') {
-        return fail(input.operation ? 'apply_patch is not supported by Freebuff Remote; use str_replace or write_file.' : 'Invalid or out-of-project file path.')
+        return fail(input.operation ? 'apply_patch is not supported by Pocketbuff; use str_replace or write_file.' : 'Invalid or out-of-project file path.')
       }
       if (!await guarded('write_file', input)) return fail('Denied by remote user.')
       const before = await fs.readFile(target, 'utf8').catch(() => null)

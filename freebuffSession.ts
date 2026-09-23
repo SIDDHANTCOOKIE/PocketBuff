@@ -1,21 +1,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import freebuffAgents from './freebuff-agents.json' with { type: 'json' }
 
 // Freebuff free mode admits one session slot per account (POST /api/v1/freebuff/session/admission) and
 // requires its instance id on every model call. This mirrors the official CLI's client
 // (codebuff cli/src/utils/freebuff-session-api.ts) with only the parts the companion needs.
 
-export const DEFAULT_FREEBUFF_MODEL = 'mimo/mimo-v2.5'
-// Free mode checks the (root agent id, model) pair, so the agent id follows the admitted model.
-export const FREE_MODE_ROOT_AGENT: Record<string, string> = {
-  'mimo/mimo-v2.5': 'base2-free',
-  'deepseek/deepseek-v4-flash': 'base2-free',
-  'deepseek/deepseek-v4-pro': 'base2-free',
-  'openai/gpt-5.6-luna': 'base2-free',
-  'z-ai/glm-5.3-flash': 'base2-free-glm-5-3-flash',
-  'upstage/solar-pro4': 'base2-free-solar-pro4',
-  'crof/kimi-k3-eco': 'base2-free-kimi-k3-eco',
-}
+export const DEFAULT_FREEBUFF_MODEL = 'z-ai/glm-5.3-flash'
+// Free mode checks the (root agent id, model) pair. These are the CLI's own base3 roots (freebuff-agents.json).
+export const FREE_MODE_ROOT_AGENT: Record<string, string> = Object.fromEntries(Object.entries(freebuffAgents.byModel).map(([model, def]) => [model, def.id]))
 
 export type FreebuffSlot = { instanceId: string; model: string; agentId: string; expiresAt: string }
 type SessionResponse = { status?: string; instanceId?: string; model?: string; expiresAt?: string; message?: string; freebucks?: { prices?: Record<string, number> } }
@@ -68,7 +61,7 @@ export class FreebuffSlotClient {
 
   private async admit(): Promise<FreebuffSlot> {
     const agentId = FREE_MODE_ROOT_AGENT[this.model]
-    if (!agentId) throw new Error(`Freebuff model ${this.model} is not supported by Freebuff Remote. Use one of: ${Object.keys(FREE_MODE_ROOT_AGENT).join(', ')}`)
+    if (!agentId) throw new Error(`Freebuff model ${this.model} is not supported by Pocketbuff. Use one of: ${Object.keys(FREE_MODE_ROOT_AGENT).join(', ')}`)
     // Admission charges the slot up front, so check the price before claiming it.
     const prices = (await this.call('GET', '/api/v1/freebuff/session')).freebucks?.prices ?? {}
     const price = prices[this.model]

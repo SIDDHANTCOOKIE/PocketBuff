@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { ServerMessage, SessionSummary } from './protocol'
+import type { CliChatSummary } from './cliChats'
 import './style.css'
 
 type Item = { key: string; sessionId: string; kind: 'user' | 'assistant' | 'system' | 'card'; text: string; title?: string; status?: string; requestId?: string }
@@ -10,6 +11,7 @@ function App() {
   const [token] = useState(() => new URLSearchParams(location.hash.slice(1)).get('token') || localStorage.getItem('freebuff-token') || '')
   const [status, setStatus] = useState('connecting'), [sessions, setSessions] = useState<SessionSummary[]>([]), [active, setActive] = useState('')
   const [items, setItems] = useState<Item[]>([]), [busy, setBusy] = useState<Record<string, boolean>>({}), [text, setText] = useState('')
+  const [cliList, setCliList] = useState<{ sessionId: string; chats: CliChatSummary[] } | null>(null), [attached, setAttached] = useState<Record<string, string | null>>({})
   const socket = useRef<WebSocket | null>(null), feed = useRef<HTMLElement | null>(null), activeRef = useRef('')
   const send = (value: unknown) => socket.current?.readyState === WebSocket.OPEN && socket.current.send(JSON.stringify(value))
 
@@ -29,7 +31,7 @@ function App() {
       ws.onmessage = (e) => {
         const message = JSON.parse(e.data) as ServerMessage
         // The server replays each session's transcript after ready, so start from a clean slate.
-        if (message.type === 'ready') { setItems([]); setBusy({}) }
+        if (message.type === 'ready') { setItems([]); setBusy({}); setAttached({}); setCliList(null) }
         if (message.type === 'ready' || message.type === 'sessions') { setSessions(message.sessions); setActive(message.activeSessionId); activeRef.current = message.activeSessionId }
         if (message.type === 'user') add({ sessionId: message.sessionId, kind: 'user', text: message.text })
         if (message.type === 'run-start') { setBusy(v => ({ ...v, [message.sessionId]: true })); add({ sessionId: message.sessionId, kind: 'assistant', text: '' }) }
@@ -40,6 +42,13 @@ function App() {
         if (message.type === 'approval-resolved') setItems(v => v.map(i => i.requestId === message.requestId ? { ...i, status: message.decision } : i))
         if (message.type === 'run-finish' || message.type === 'run-cancelled') setBusy(v => ({ ...v, [message.sessionId]: false }))
         if (message.type === 'run-cancelled') add({ sessionId: message.sessionId, kind: 'system', text: 'Run cancelled.' })
+        if (message.type === 'cli-chats') setCliList({ sessionId: message.sessionId, chats: message.chats })
+        if (message.type === 'cli-attached') setAttached(v => ({ ...v, [message.sessionId]: message.chatId }))
+        if (message.type === 'cli-opened') {
+          setAttached(v => ({ ...v, [message.sessionId]: message.chatId })); setCliList(null)
+          add({ sessionId: message.sessionId, kind: 'system', text: message.chatId ? `Continuing terminal chat ${message.chatId}` : 'Back to the phone session.' })
+          for (const entry of message.transcript) add({ sessionId: message.sessionId, kind: entry.role, text: entry.text })
+        }
         if (message.type === 'error') add({ sessionId: message.sessionId ?? activeRef.current, kind: 'system', text: `Error: ${message.message}` })
       }
     }
@@ -53,8 +62,10 @@ function App() {
   const create = () => { const projectDir = prompt('Absolute project path'); if (!projectDir) return; const name = prompt('Session name', projectDir.split('/').pop() || 'Project') || 'Project'; send({ type: 'session-create', name, projectDir }) }
 
   return <main>
-    <header><div><h1>Freebuff Remote</h1><span className={status}>{status}</span></div><button className="new" onClick={create}>+ Session</button></header>
+    <header><div><h1>Pocketbuff</h1><span className={status}>{status}</span></div><div><button className="new" onClick={() => send({ type: 'cli-list', sessionId: active })}>Terminal chats</button><button className="new" onClick={create}>+ Session</button></div></header>
     <nav>{sessions.map(session => <button key={session.id} className={session.id === active ? 'active' : ''} onClick={() => send({ type: 'session-select', sessionId: session.id })}>{session.name}<small>{session.projectDir}</small></button>)}</nav>
+    {attached[active] && <p className="attached">Terminal chat {attached[active]} <button onClick={() => send({ type: 'cli-open', sessionId: active, chatId: null })}>Detach</button></p>}
+    {cliList?.sessionId === active && <div className="picker"><strong>Terminal chats in this project</strong>{cliList.chats.length ? cliList.chats.map(chat => <button key={chat.chatId} onClick={() => send({ type: 'cli-open', sessionId: active, chatId: chat.chatId })}>{chat.firstPrompt || chat.chatId}<small>{chat.messageCount} messages · {new Date(chat.updatedAt).toLocaleString()}</small></button>) : <small>No terminal chats found for this project yet.</small>}<button className="close" onClick={() => setCliList(null)}>Close</button></div>}
     <section ref={feed}>{visible.map(item => item.kind === 'card' ? <article key={item.key} className="card"><strong>{item.title}</strong><small>{item.status}</small><pre>{item.text}</pre>{item.requestId && item.status === 'waiting' && <div><button onClick={() => send({ type: 'approval', sessionId: item.sessionId, requestId: item.requestId, decision: 'approve' })}>Approve</button><button className="deny" onClick={() => send({ type: 'approval', sessionId: item.sessionId, requestId: item.requestId, decision: 'deny' })}>Deny</button></div>}</article> : <article key={item.key} className={item.kind}>{item.text || (running && item.key === lastAssistant ? 'Thinking…' : '')}</article>)}</section>
     {running && <button className="cancel" onClick={() => send({ type: 'cancel', sessionId: active })}>Cancel run</button>}
     <form onSubmit={submit}><textarea value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit() } }} placeholder="Ask Freebuff…" rows={3}/><button disabled={running || status !== 'connected'}>{running ? 'Running' : 'Send'}</button></form>

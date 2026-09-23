@@ -7,7 +7,8 @@ import { CheckpointStore } from './checkpoint.js'
 import { approvalReason } from './approval.js'
 import { FreebuffSlotClient } from './freebuffSession.js'
 import { isSdkPatched, sdkDir } from './scripts/patch-sdk.mjs'
-import freebuffAgent from './freebuff-agent.json' with { type: 'json' }
+import freebuffAgents from './freebuff-agents.json' with { type: 'json' }
+import { appendCliTurn, readCliRunState, replyText } from './cliChats.js'
 
 export interface RuntimeHandlers {
   event(value: unknown): void
@@ -16,9 +17,12 @@ export interface RuntimeHandlers {
   approve?(toolName: string, input: Record<string, unknown>, reason: string): Promise<boolean>
 }
 
+/** Continue a Freebuff CLI chat instead of the companion's own session history. */
+export type RunOptions = { cliChatId?: string }
+
 export interface ChatRuntime {
   readonly name: 'codebuff' | 'mock'
-  run(prompt: string, handlers: RuntimeHandlers): Promise<unknown>
+  run(prompt: string, handlers: RuntimeHandlers, options?: RunOptions): Promise<unknown>
 }
 
 export class CodebuffRuntime implements ChatRuntime {
@@ -33,7 +37,7 @@ export class CodebuffRuntime implements ChatRuntime {
     this.previousRun = this.store.load()
   }
 
-  async run(prompt: string, handlers: RuntimeHandlers): Promise<unknown> {
+  async run(prompt: string, handlers: RuntimeHandlers, options: RunOptions = {}): Promise<unknown> {
     const guarded = async (toolName: string, input: Record<string, unknown>) => {
       const reason = approvalReason(toolName, input)
       return !reason || await handlers.approve?.(toolName, input, reason) === true
@@ -46,11 +50,25 @@ export class CodebuffRuntime implements ChatRuntime {
     const slot = await this.slots.ensure()
     // Read by the patched SDK when it builds codebuff_metadata for each model call.
     ;(globalThis as { __freebuffRemoteMetadata?: Record<string, string> }).__freebuffRemoteMetadata = { freebuff_instance_id: slot.instanceId }
-    // handleSteps ships as source text; the SDK accepts that form and evaluates it the same way it does functions.
-    const { _source: _ignored, ...definition } = freebuffAgent
+    // The CLI's own root for the admitted model; handleSteps (if any) ships as source text, which the SDK evaluates like a function.
+    const definition = (freebuffAgents.byModel as Record<string, { id: string }>)[slot.model]
+    if (!definition) throw new Error(`No Freebuff agent definition for model ${slot.model}`)
+    let previousRun = this.previousRun
+    if (options.cliChatId) {
+      previousRun = readCliRunState<RunState>(this.projectDir, options.cliChatId)
+      // The CLI saves every bundled agent template in its run state, in a shape that fails the backend's validation
+      // when sent back. Keep only the root we pass below; the CLI re-adds its own templates on its next --continue.
+      // Newer CLIs also store gitChanges as a repo summary without the status/diff strings this SDK formats, which
+      // crashes prompt assembly; drop it so the SDK skips that section.
+      const fileContext = previousRun.sessionState?.fileContext as { agentTemplates?: unknown; gitChanges?: { status?: unknown } } | undefined
+      if (fileContext) {
+        fileContext.agentTemplates = {}
+        if (fileContext.gitChanges && typeof fileContext.gitChanges.status !== 'string') delete fileContext.gitChanges
+      }
+    }
     const result = await client.run({
-      agent: slot.agentId, agentDefinitions: [{ ...definition, id: slot.agentId, model: slot.model } as unknown as AgentDefinition],
-      prompt, previousRun: this.previousRun, costMode: 'free',
+      agent: definition.id, agentDefinitions: [definition as unknown as AgentDefinition],
+      prompt, previousRun, costMode: 'free',
       handleEvent: handlers.event, handleStreamChunk: handlers.chunk, signal: handlers.signal,
     })
     // The SDK reports backend failures (403s, gate refusals) as an error output instead of throwing.
@@ -59,6 +77,7 @@ export class CodebuffRuntime implements ChatRuntime {
       if (/instance|session|free_mode|forbidden/i.test(output.message ?? '')) this.slots.invalidate()
       throw new Error(firstLine(output.message) || 'Freebuff run failed')
     }
+    if (options.cliChatId) { appendCliTurn(this.projectDir, options.cliChatId, result, prompt, replyText(result.output)); return result.output }
     this.previousRun = result
     this.store.save(result)
     return result.output

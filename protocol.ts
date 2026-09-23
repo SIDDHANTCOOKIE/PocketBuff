@@ -1,3 +1,4 @@
+import type { CliChatSummary, CliTranscriptItem } from './cliChats.js'
 export type ApprovalDecision = 'approve' | 'deny'
 export type SessionSummary = { id: string; name: string; projectDir: string; updatedAt: string }
 
@@ -8,6 +9,8 @@ export type ClientMessage =
   | { type: 'session-create'; name: string; projectDir: string }
   | { type: 'session-select'; sessionId: string }
   | { type: 'session-delete'; sessionId: string }
+  | { type: 'cli-list'; sessionId: string }
+  | { type: 'cli-open'; sessionId: string; chatId: string | null }
   | { type: 'ping' }
 
 export type ToolCard = { id: string; name: string; input: Record<string, unknown>; status: 'running' | 'succeeded' | 'failed'; output?: unknown }
@@ -25,5 +28,8 @@ export type ServerMessage =
   | { type: 'approval-resolved'; sessionId: string; requestId: string; decision: ApprovalDecision }
   | { type: 'run-finish'; sessionId: string; output: unknown }
   | { type: 'run-cancelled'; sessionId: string }
+  | { type: 'cli-chats'; sessionId: string; chats: CliChatSummary[] }
+  | { type: 'cli-opened'; sessionId: string; chatId: string | null; transcript: CliTranscriptItem[] }
+  | { type: 'cli-attached'; sessionId: string; chatId: string }
   | { type: 'error'; message: string; sessionId?: string }
   | { type: 'pong' }

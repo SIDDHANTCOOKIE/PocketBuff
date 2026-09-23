@@ -10,6 +10,51 @@ const apps: ReturnType<typeof createCompanionServer>[] = []
 afterEach(async () => { await Promise.all(apps.splice(0).map((app) => app.close())) })
 
 describe('companion server', () => {
+  it('lists, opens and continues a Freebuff CLI chat, and restates the attachment on reconnect', async () => {
+    const config = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-cli-')), projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-proj-'))
+    const chat = path.join(config, 'projects', path.basename(projectDir), 'chats', 'c1')
+    fs.mkdirSync(chat, { recursive: true })
+    fs.writeFileSync(path.join(chat, 'run-state.json'), '{}')
+    fs.writeFileSync(path.join(chat, 'chat-messages.json'), JSON.stringify([{ variant: 'user', content: 'from the terminal' }, { variant: 'ai', content: 'ok' }]))
+    process.env.FREEBUFF_CONFIG_DIR = config
+    const seen: unknown[] = []
+    const runtime = { name: 'mock' as const, async run(_prompt: string, _handlers: import('./runtime').RuntimeHandlers, options?: { cliChatId?: string }) { seen.push(options); return 'done' } }
+    const app = createCompanionServer({ runtime, token: 'secret', projectDir, stateDir: fs.mkdtempSync(path.join(os.tmpdir(), 'fb-state-')) })
+    apps.push(app)
+    const { port } = await app.listen(0)
+    const talk = (onMessage: (m: Record<string, any>, ws: WebSocket) => boolean) => new Promise<Array<Record<string, any>>>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=secret`), messages: Array<Record<string, any>> = []
+      ws.on('error', reject); ws.on('message', (raw) => { const m = JSON.parse(raw.toString()); messages.push(m); if (onMessage(m, ws)) { ws.close(); resolve(messages) } })
+    })
+    try {
+      const first = await talk((m, ws) => {
+        if (m.type === 'ready') ws.send(JSON.stringify({ type: 'cli-list', sessionId: m.activeSessionId }))
+        if (m.type === 'cli-chats') ws.send(JSON.stringify({ type: 'cli-open', sessionId: m.sessionId, chatId: m.chats[0].chatId }))
+        if (m.type === 'cli-opened') ws.send(JSON.stringify({ type: 'chat', sessionId: m.sessionId, text: 'from the phone' }))
+        return m.type === 'run-finish'
+      })
+      expect(first.find((m) => m.type === 'cli-chats')?.chats).toEqual([expect.objectContaining({ chatId: 'c1', firstPrompt: 'from the terminal' })])
+      expect(first.find((m) => m.type === 'cli-opened')?.transcript).toEqual([{ role: 'user', text: 'from the terminal' }, { role: 'assistant', text: 'ok' }])
+      expect(seen).toEqual([{ cliChatId: 'c1' }])
+      const again = await talk((m) => m.type === 'cli-attached')
+      expect(again.at(-1)).toMatchObject({ type: 'cli-attached', chatId: 'c1' })
+    } finally { delete process.env.FREEBUFF_CONFIG_DIR }
+  })
+
+  it('refuses to open a CLI chat that does not exist', async () => {
+    const app = createCompanionServer({ runtime: new MockRuntime(), token: 'secret', projectDir: fs.mkdtempSync(path.join(os.tmpdir(), 'fb-proj-')), stateDir: fs.mkdtempSync(path.join(os.tmpdir(), 'fb-state-')) })
+    apps.push(app)
+    const { port } = await app.listen(0)
+    process.env.FREEBUFF_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-cli-'))
+    try {
+      const error = await new Promise<Record<string, any>>((resolve, reject) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=secret`)
+        ws.on('error', reject); ws.on('message', (raw) => { const m = JSON.parse(raw.toString()); if (m.type === 'ready') ws.send(JSON.stringify({ type: 'cli-open', sessionId: m.activeSessionId, chatId: '..' })); if (m.type === 'error') { ws.close(); resolve(m) } })
+      })
+      expect(error.message).toBe('Unknown CLI chat')
+    } finally { delete process.env.FREEBUFF_CONFIG_DIR }
+  })
+
   it('runs a complete websocket chat loop', async () => {
     const app = createCompanionServer({ runtime: new MockRuntime(), token: 'secret' })
     apps.push(app)

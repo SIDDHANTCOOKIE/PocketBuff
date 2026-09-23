@@ -18,19 +18,19 @@ function fakeServer(responses: Record<string, (call: Call) => { status?: number;
 }
 const stateFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fb-slot-')), 'slot.json')
 const later = new Date(Date.now() + 3_600_000).toISOString()
-const prices = { freebucks: { prices: { 'mimo/mimo-v2.5': 0, 'deepseek/deepseek-v4-flash': 5 } } }
+const prices = { freebucks: { prices: { 'z-ai/glm-5.3-flash': 0, 'mimo/mimo-v2.5': 0, 'deepseek/deepseek-v4-flash': 5 } } }
 
 describe('Freebuff slot client', () => {
-  it('admits a zero-cost model, persists the slot and sends the auth and model headers', async () => {
+  it('admits the default zero-cost model, persists the slot and sends the auth and model headers', async () => {
     const server = fakeServer({
       'GET /api/v1/freebuff/session': () => ({ body: { status: 'none', ...prices } }),
-      'POST /api/v1/freebuff/session/admission': () => ({ body: { status: 'active', instanceId: 'inst-1', model: 'mimo/mimo-v2.5', expiresAt: later } }),
+      'POST /api/v1/freebuff/session/admission': () => ({ body: { status: 'active', instanceId: 'inst-1', model: 'z-ai/glm-5.3-flash', expiresAt: later } }),
     })
     const file = stateFile()
     const slot = await new FreebuffSlotClient({ token: 'tok', stateFile: file, fetch: server.fetch }).ensure()
-    expect(slot).toMatchObject({ instanceId: 'inst-1', model: 'mimo/mimo-v2.5', agentId: 'base2-free' })
+    expect(slot).toMatchObject({ instanceId: 'inst-1', model: 'z-ai/glm-5.3-flash', agentId: 'base3-free-glm-5-3-flash' })
     const post = server.calls.find((call) => call.method === 'POST')!
-    expect(post.headers).toMatchObject({ Authorization: 'Bearer tok', 'x-freebuff-model': 'mimo/mimo-v2.5', 'x-freebuff-wallet-spend-limit': '0' })
+    expect(post.headers).toMatchObject({ Authorization: 'Bearer tok', 'x-freebuff-model': 'z-ai/glm-5.3-flash', 'x-freebuff-wallet-spend-limit': '0' })
     expect(JSON.parse(fs.readFileSync(file, 'utf8')).instanceId).toBe('inst-1')
   })
 
@@ -43,7 +43,7 @@ describe('Freebuff slot client', () => {
 
   it('reuses a saved live slot after checking it with the server, then releases it', async () => {
     const file = stateFile()
-    fs.writeFileSync(file, JSON.stringify({ instanceId: 'inst-9', model: 'mimo/mimo-v2.5', agentId: 'base2-free', expiresAt: later }))
+    fs.writeFileSync(file, JSON.stringify({ instanceId: 'inst-9', model: 'mimo/mimo-v2.5', agentId: 'base3-free-mimo', expiresAt: later }))
     const server = fakeServer({
       'GET /api/v1/freebuff/session': (call) => ({ body: { status: 'active', instanceId: call.headers['x-freebuff-instance-id'] } }),
       'DELETE /api/v1/freebuff/session': () => ({ body: { status: 'none' } }),

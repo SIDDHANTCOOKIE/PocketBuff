@@ -1,4 +1,4 @@
-# Freebuff Remote Control
+# Pocketbuff (freebuff-remote-control)
 
 M1 spike for controlling a local Freebuff coding-agent runtime from a phone or web browser. It embeds Codebuff's Apache-2.0 SDK, reuses the login created by the Freebuff CLI, and exposes its event/chunk stream over a small WebSocket protocol. It does **not** PTY-wrap the TUI and it does not require a separate paid SDK key.
 
@@ -123,13 +123,26 @@ The automated environment used for this spike does not have a Tailscale daemon, 
 
 The companion runs on your existing Freebuff login (`~/.config/manicode/credentials.json`) with no paid key. Free mode has three requirements, and the companion handles all of them:
 
-- **Agent and model.** Free mode only admits the CLI's own root agent (`base2-free`) on an allowlisted model. `freebuff-agent.json` is that definition copied verbatim from the codebuff repo (Apache-2.0). Regenerate it with `node scripts/extract-freebuff-agent.mjs /path/to/codebuff`.
+- **Agent and model.** Free mode only admits the CLI's own root agent for the admitted model (the current CLI uses `base3-free-*` roots, for example `base3-free-glm-5-3-flash`). `freebuff-agents.json` holds those definitions, keyed by model and copied verbatim from the codebuff repo (Apache-2.0). Regenerate it with `node scripts/extract-freebuff-agent.mjs /path/to/codebuff`.
 - **Session slot.** Before the first run, the companion claims a slot (`POST /api/v1/freebuff/session/admission`). It saves the slot in `~/.config/freebuff-remote/slot.json` and releases it when the server stops.
 - **Instance id on every call.** `@codebuff/sdk` 0.10.7 can't send `freebuff_instance_id`, so `npm install` runs `scripts/patch-sdk.mjs` to add it. The server refuses to start with an unpatched SDK.
 
 Settings:
 
-- `FREEBUFF_MODEL` (default `mimo/mimo-v2.5`). Supported values: `mimo/mimo-v2.5`, `z-ai/glm-5.3-flash`, `upstage/solar-pro4`, `crof/kimi-k3-eco`, `deepseek/deepseek-v4-flash`, `deepseek/deepseek-v4-pro`, `openai/gpt-5.6-luna`.
+- `FREEBUFF_MODEL` (default `z-ai/glm-5.3-flash`, which costs 0 Freebucks). Supported values: `z-ai/glm-5.3-flash`, `mimo/mimo-v2.5`, `upstage/solar-pro4`, `deepseek/deepseek-v4-flash`, `deepseek/deepseek-v4-pro`, `openai/gpt-5.6-luna`.
 - `FREEBUFF_ALLOW_FREEBUCKS=1` lets the companion claim a model that costs Freebucks. By default it only claims zero-cost models and tells you which ones are available.
 
-Freebuff gives one slot per account. While the companion holds it, your desktop `freebuff` CLI can't run at the same time, and vice versa.
+Freebuff gives one slot per account. While the companion holds it, your desktop `freebuff` CLI can't run at the same time, and vice versa. Stop the companion (Ctrl-C) before going back to the terminal; it gives the slot back on exit, even with a phone still connected.
+
+## Terminal chats (M5): continue a CLI chat on your phone
+
+Tap **Terminal chats** to list the Freebuff CLI chats for the session's project (from `~/.config/manicode/projects/<project folder name>/chats/`, or `FREEBUFF_CONFIG_DIR`). Opening one shows its transcript. Messages you send then continue that chat: the companion loads the CLI's saved `run-state.json` as the previous run, and after each turn it writes `run-state.json`, `chat-messages.json` and `chat-meta.json` back in the CLI's format. **Detach** goes back to the phone's own session.
+
+Back at the desk, run `freebuff --continue <chat id>` (the id is shown in the banner on the phone). The CLI shows the phone's turns and the model remembers them.
+
+Two things are adjusted when loading a CLI run state, because `@codebuff/sdk` 0.10.7 is older than the CLI:
+
+- The CLI saves every bundled agent template in the run state, and the backend rejects them when they're sent back. The companion sends only the root agent; the CLI adds its own again on its next run.
+- Newer CLIs store `gitChanges` as a repository summary that the SDK's prompt builder can't read, so it is dropped.
+
+Stop the CLI before continuing a chat on the phone, and stop the companion before `freebuff --continue`: only one of them can hold the Freebuff slot. If the CLI shows "Take over", choosing it restarts the CLI without your `--continue` argument, so run the command again.
