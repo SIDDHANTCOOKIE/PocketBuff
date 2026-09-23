@@ -9,8 +9,8 @@ import path from 'node:path'
 // with run-state.json (SDK RunState), chat-messages.json (UI transcript) and chat-meta.json (summary).
 
 export type CliChatSummary = { chatId: string; firstPrompt: string; messageCount: number; updatedAt: string }
-export type CliTranscriptItem = { role: 'user' | 'assistant'; text: string }
-type CliBlock = { type?: string; textType?: string; content?: unknown; toolName?: string; blocks?: CliBlock[] }
+export type CliTranscriptItem = { role: 'user' | 'assistant'; text: string } | { role: 'tool'; text: string; subject: string; output: string }
+type CliBlock = { type?: string; textType?: string; content?: unknown; toolName?: string; input?: unknown; output?: unknown; blocks?: CliBlock[] }
 type CliMessage = { id?: string; variant?: string; content?: string; blocks?: CliBlock[]; timestamp?: string; [key: string]: unknown }
 
 export function cliConfigDir(env = process.env) { return env.FREEBUFF_CONFIG_DIR || path.join(os.homedir(), '.config', 'manicode') }
@@ -43,21 +43,41 @@ export function listCliChats(projectDir: string): CliChatSummary[] {
   return chats.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 }
 
-function blockText(blocks: CliBlock[] = []): string {
-  const parts: string[] = []
+// Tools that only drive the CLI's own UI; they carry nothing a reader of the transcript needs.
+const HIDDEN_TOOLS = new Set(['suggest_followups', 'end_turn', 'set_output'])
+
+// Terminal output can be huge; the phone only needs enough to recognise what happened.
+const clip = (text: string, max = 4000) => text.length > max ? text.slice(0, max) + '\n…' : text
+
+function toolSubject(input: unknown): string {
+  let value: Record<string, unknown> = {}
+  try { const parsed = typeof input === 'string' ? JSON.parse(input) : input; if (parsed && typeof parsed === 'object') value = parsed as Record<string, unknown> } catch { return '' }
+  const pick = (v: unknown) => Array.isArray(v) ? v.filter((x) => typeof x === 'string').join(', ') : typeof v === 'string' ? v : ''
+  return pick(value.path) || pick(value.paths) || pick(value.filePaths) || pick(value.command) || pick(value.pattern) || pick(value.query) || ''
+}
+
+/** Assistant blocks in order: replies as text, tool calls as their own entries, reasoning left out. */
+function blockItems(blocks: CliBlock[] = [], out: CliTranscriptItem[] = []): CliTranscriptItem[] {
   for (const block of blocks) {
-    if (block.type === 'text' && block.textType !== 'reasoning' && typeof block.content === 'string' && block.content.trim()) parts.push(block.content.trim())
-    else if (block.type === 'tool' && block.toolName) parts.push(`[${block.toolName}]`)
-    else if (block.type === 'agent') parts.push(blockText(block.blocks))
+    if (block.type === 'text' && block.textType !== 'reasoning' && typeof block.content === 'string' && block.content.trim()) {
+      const last = out.at(-1)
+      if (last?.role === 'assistant') last.text += '\n\n' + block.content.trim(); else out.push({ role: 'assistant', text: block.content.trim() })
+    } else if (block.type === 'tool' && block.toolName && !HIDDEN_TOOLS.has(block.toolName)) {
+      out.push({ role: 'tool', text: block.toolName, subject: toolSubject(block.input), output: typeof block.output === 'string' ? clip(block.output) : '' })
+    } else if (block.type === 'agent') blockItems(block.blocks, out)
   }
-  return parts.filter(Boolean).join('\n')
+  return out
 }
 
 /** The visible conversation (user prompts and assistant replies, reasoning left out). */
 export function readCliTranscript(projectDir: string, chatId: string): CliTranscriptItem[] {
   return readMessages(chatDir(projectDir, chatId)).flatMap((message): CliTranscriptItem[] => {
     if (message.variant === 'user' && message.content) return [{ role: 'user', text: message.content }]
-    if (message.variant === 'ai') { const text = [message.content ?? '', blockText(message.blocks)].filter((part) => part.trim()).join('\n'); return text ? [{ role: 'assistant', text }] : [] }
+    if (message.variant === 'ai') {
+      const items = blockItems(message.blocks)
+      if (message.content?.trim()) items.unshift({ role: 'assistant', text: message.content.trim() })
+      return items
+    }
     return []
   })
 }

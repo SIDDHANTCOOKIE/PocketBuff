@@ -22,6 +22,30 @@ function toolSubject(input: Record<string, unknown> = {}) {
 const Icon = ({ d, w = 16, h = 16 }: { d: string; w?: number; h?: number }) => <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d}/></svg>
 const icons = { terminal: 'M1 3.5 5.5 8 1 12.5M8.5 12.5H15', plus: 'M8 1v14M1 8h14', send: 'M8 14.5V1.5M2.5 7 8 1.5 13.5 7', close: 'M1 1l14 14M15 1 1 15', chevron: 'M1.25 3 7.25 8l-6 5' }
 
+/** Minimal Markdown for replies: fenced code, bullet/numbered lists, `code` and **bold**. Builds React nodes, never HTML. */
+function inline(text: string, key: string): React.ReactNode[] {
+  return text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/g).filter(Boolean).map((part, i) =>
+    part.startsWith('`') && part.endsWith('`') && part.length > 2 ? <code key={`${key}-${i}`}>{part.slice(1, -1)}</code>
+    : part.startsWith('**') && part.endsWith('**') && part.length > 4 ? <strong key={`${key}-${i}`}>{part.slice(2, -2)}</strong>
+    : part)
+}
+function Markdown({ text }: { text: string }) {
+  const blocks: React.ReactNode[] = []
+  const lines = text.split('\n')
+  for (let i = 0; i < lines.length;) {
+    const line = lines[i]
+    if (line.startsWith('```')) { const body: string[] = []; i++; while (i < lines.length && !lines[i].startsWith('```')) body.push(lines[i++]); i++; blocks.push(<pre key={i} className="codeblock">{body.join('\n')}</pre>); continue }
+    const bullet = /^\s*(?:[-*]|\d+\.)\s+/
+    if (bullet.test(line)) { const ordered = /^\s*\d+\./.test(line), items: string[] = []; while (i < lines.length && bullet.test(lines[i])) items.push(lines[i++].replace(bullet, '')); const List = ordered ? 'ol' : 'ul'; blocks.push(<List key={i}>{items.map((item, j) => { const task = /^\[( |x|X)\]\s+/.exec(item); return <li key={j} className={task ? 'task' : undefined}>{task && <span className={`check ${task[1] === ' ' ? '' : 'done'}`} aria-label={task[1] === ' ' ? 'to do' : 'done'}/>}{inline(task ? item.slice(task[0].length) : item, `${i}-${j}`)}</li> })}</List>); continue }
+    const heading = /^#{1,6}\s+(.*)$/.exec(line)
+    if (heading) { blocks.push(<p key={i} className="heading">{inline(heading[1], String(i))}</p>); i++; continue }
+    if (!line.trim()) { i++; continue }
+    const para: string[] = []; while (i < lines.length && lines[i].trim() && !lines[i].startsWith('```') && !bullet.test(lines[i]) && !/^#{1,6}\s/.test(lines[i])) para.push(lines[i++])
+    blocks.push(<p key={i}>{inline(para.join('\n'), String(i))}</p>)
+  }
+  return <>{blocks}</>
+}
+
 /** Readable text from a tool result: command output or a status message, else the raw JSON. */
 function toolOutput(output: unknown): string {
   const parts = Array.isArray(output) ? output : [output]
@@ -87,7 +111,7 @@ function App() {
         if (message.type === 'cli-opened') {
           setAttached(v => ({ ...v, [message.sessionId]: message.chatId })); setCliList(null)
           add({ sessionId: message.sessionId, kind: 'system', text: message.chatId ? 'Continuing terminal chat' : 'Back to the phone session' })
-          for (const entry of message.transcript) add({ sessionId: message.sessionId, kind: entry.role, text: entry.text })
+          for (const entry of message.transcript) add(entry.role === 'tool' ? { sessionId: message.sessionId, kind: 'card', card: 'tool', title: entry.text, subtitle: entry.subject, text: '', detail: entry.output || undefined, status: 'succeeded' } : { sessionId: message.sessionId, kind: entry.role, text: entry.text })
         }
         if (message.type === 'error') add({ sessionId: message.sessionId ?? activeRef.current, kind: 'system', text: `Error: ${message.message}` })
       }
@@ -117,7 +141,7 @@ function App() {
         {item.requestId && waiting && <div className="actions"><button className="ghost" onClick={() => decide(item, 'deny')}>Deny</button><button className="primary" onClick={() => decide(item, 'approve')}>Approve</button></div>}
       </article>
     }
-    return <details key={item.key} className={`card tool ${item.status}`}><summary><span className="dot"/><code className="tool">{item.title}</code><span className="subject">{item.subtitle}</span><span className="chev"><Icon d={icons.chevron} w={8}/></span></summary><pre>{item.detail ?? item.text}</pre></details>
+    return <details key={item.key} className={`card tool ${item.status}`}><summary><span className="dot"/><code className="tool">{item.title}</code><span className="subject">{item.subtitle}</span><span className="chev"><Icon d={icons.chevron} w={8}/></span></summary>{(item.detail ?? item.text) && <pre>{item.detail ?? item.text}</pre>}</details>
   }
 
   return <main>
@@ -128,13 +152,13 @@ function App() {
         <button className="icon" aria-label="New session" title="New session" onClick={create}><Icon d={icons.plus}/></button>
       </div>
     </header>
-    <nav className="rail">{sessions.map(session => <button key={session.id} className={session.id === active ? 'active' : ''} onClick={() => send({ type: 'session-select', sessionId: session.id })}>{session.name}</button>)}</nav>
+    <nav className="rail">{sessions.map(session => <button key={session.id} className={session.id === active ? 'active' : ''} onClick={() => send({ type: 'session-select', sessionId: session.id })}>{busy[session.id] && <i className="live" aria-label="running"/>}{session.name}</button>)}</nav>
     {attached[active] && <div className="attached"><span><Icon d={icons.terminal}/>Terminal chat <code>{attached[active]}</code></span><button className="link" onClick={() => send({ type: 'cli-open', sessionId: active, chatId: null })}>Detach</button></div>}
     <section ref={feed} className="feed" key={active}>
-      {visible.length === 0 && <div className="empty"><h2>What should we <em>build</em>?</h2><p><code>{current?.projectDir}</code></p></div>}
+      {visible.length === 0 && <div className="empty"><h2>What should we <em>build</em>?</h2><p><code>{current?.projectDir}</code></p><button className="quiet" onClick={() => send({ type: 'cli-list', sessionId: active })}>Continue a terminal chat<Icon d={icons.chevron} w={8}/></button></div>}
       {visible.map(item => item.kind === 'card' ? renderCard(item)
         : item.kind === 'system' ? <p key={item.key} className={item.text.startsWith('Error') ? 'system error' : 'system'}>{item.text}</p>
-        : <article key={item.key} className={item.kind}>{item.text}{running && item.key === lastAssistant && <span className="caret" aria-hidden="true"/>}</article>)}
+        : <article key={item.key} className={item.kind}>{item.kind === 'assistant' ? <Markdown text={item.text}/> : item.text}{running && item.key === lastAssistant && <span className="caret" aria-hidden="true"/>}</article>)}
     </section>
     <form className="composer" onSubmit={submit}>
       <textarea ref={input} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit() } }} placeholder={attached[active] ? 'Continue the terminal chat' : 'Ask Freebuff'} rows={1}/>
