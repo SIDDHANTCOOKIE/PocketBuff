@@ -26,7 +26,7 @@ Hard requirements:
 
 Out of scope for M5: live attach to a running CLI. The CLI has no HTTP/IPC server; the only live option is a tmux-wrapped terminal view (Agent Orchestrator style), tracked separately.
 
-## M6 - One-command self-host setup (built: site/install.sh, site/install.md, site/index.html)
+## M6 - One-command self-host setup (built: site/install.sh, site/install.ps1, site/install.md, site/index.html)
 
 Goal: `curl -fsSL <url>/install.sh | sh` (macOS/Linux) or `irm <url>/install.ps1 | iex` (Windows) gets anyone to a working phone URL in about 5 minutes.
 

@@ -52,7 +52,7 @@ conf_get() { [ -f "$CONFIG" ] && sed -n "s/^$1=//p" "$CONFIG" | tail -1; }
 
 # ---------- platform ----------
 os="$(uname -s)"; arch="$(uname -m)"
-case "$os" in Darwin) os=darwin ;; Linux) os=linux ;; *) echo "STEP platform FAIL $os is not supported by install.sh (Windows: use WSL for now)"; exit 1 ;; esac
+case "$os" in Darwin) os=darwin ;; Linux) os=linux ;; *) echo "STEP platform FAIL $os is not supported by install.sh (Windows: use install.ps1 from the same site)"; exit 1 ;; esac
 case "$arch" in x86_64|amd64) arch=x64 ;; arm64|aarch64) arch=arm64 ;; *) echo "STEP platform FAIL CPU $arch is not supported"; exit 1 ;; esac
 
 # ---------- node ----------
