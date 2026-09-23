@@ -11,7 +11,7 @@ function App() {
   const [token] = useState(() => new URLSearchParams(location.hash.slice(1)).get('token') || localStorage.getItem('freebuff-token') || '')
   const [status, setStatus] = useState('connecting'), [sessions, setSessions] = useState<SessionSummary[]>([]), [active, setActive] = useState('')
   const [lines, setLines] = useState<Line[]>([]), [cards, setCards] = useState<Card[]>([]), [busy, setBusy] = useState<Record<string, boolean>>({}), [text, setText] = useState('')
-  const socket = useRef<WebSocket | null>(null), feed = useRef<HTMLElement | null>(null)
+  const socket = useRef<WebSocket | null>(null), feed = useRef<HTMLElement | null>(null), activeRef = useRef('')
   const send = (value: unknown) => socket.current?.readyState === WebSocket.OPEN && socket.current.send(JSON.stringify(value))
 
   useEffect(() => {
@@ -21,7 +21,7 @@ function App() {
     ws.onopen = () => setStatus('connected'); ws.onclose = () => setStatus('disconnected'); ws.onerror = () => setStatus('error')
     ws.onmessage = (e) => {
       const message = JSON.parse(e.data) as ServerMessage
-      if (message.type === 'ready' || message.type === 'sessions') { setSessions(message.sessions); setActive(message.activeSessionId) }
+      if (message.type === 'ready' || message.type === 'sessions') { setSessions(message.sessions); setActive(message.activeSessionId); activeRef.current = message.activeSessionId }
       if (message.type === 'run-start') { setBusy(v => ({ ...v, [message.sessionId]: true })); setLines(v => [...v, { sessionId: message.sessionId, role: 'assistant', text: '' }]) }
       if (message.type === 'chunk') { const value = chunkText(message.chunk); if (value) setLines(v => { const next = [...v]; let i = next.length - 1; while (i >= 0 && !(next[i].sessionId === message.sessionId && next[i].role === 'assistant')) i--; if (i >= 0) next[i] = { ...next[i], text: next[i].text + value }; return next }) }
       if (message.type === 'tool') setCards(v => [...v.filter(card => card.id !== message.tool.id || card.sessionId !== message.sessionId), { id: message.tool.id, sessionId: message.sessionId, title: message.tool.name, detail: JSON.stringify(message.tool.output ?? message.tool.input, null, 2), status: message.tool.status }])
@@ -29,7 +29,7 @@ function App() {
       if (message.type === 'approval-request') setCards(v => [...v, { id: message.toolCallId, sessionId: message.sessionId, requestId: message.requestId, title: `Approval: ${message.toolName}`, detail: message.reason + '\n' + JSON.stringify(message.input, null, 2), status: 'waiting' }])
       if (message.type === 'approval-resolved') setCards(v => v.map(card => card.requestId === message.requestId ? { ...card, status: message.decision } : card))
       if (message.type === 'run-finish' || message.type === 'run-cancelled') setBusy(v => ({ ...v, [message.sessionId]: false }))
-      if (message.type === 'error') setLines(v => [...v, { sessionId: active, role: 'system', text: `Error: ${message.message}` }])
+      if (message.type === 'error') setLines(v => [...v, { sessionId: activeRef.current, role: 'system', text: `Error: ${message.message}` }])
     }; return () => ws.close()
   }, [token])
   useEffect(() => { feed.current?.scrollTo({ top: feed.current.scrollHeight, behavior: 'smooth' }) }, [lines, cards, active])

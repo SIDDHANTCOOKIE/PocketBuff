@@ -1,8 +1,7 @@
-import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { CodebuffClient, ToolHelpers, type RunState } from '@codebuff/sdk'
-import { applyPatch } from 'diff'
+import { CodebuffClient, type RunState } from '@codebuff/sdk'
+import { createToolOverrides } from './toolOverrides.js'
 import { readFreebuffToken } from './auth.js'
 import { CheckpointStore } from './checkpoint.js'
 import { approvalReason } from './approval.js'
@@ -37,30 +36,7 @@ export class CodebuffRuntime implements ChatRuntime {
     const client = new CodebuffClient({
       apiKey: this.apiKey,
       cwd: this.projectDir,
-      overrideTools: {
-        run_terminal_command: async (input) => {
-          if (!await guarded('run_terminal_command', input)) return [{ type: 'json', value: { errorMessage: 'Denied by remote user.' } }]
-          const root = path.resolve(this.projectDir)
-          const cwd = path.resolve(root, input.cwd ?? '.')
-          if (cwd !== root && !cwd.startsWith(root + path.sep)) return [{ type: 'json', value: { errorMessage: 'Terminal cwd must stay inside the project.' } }]
-          return ToolHelpers.runTerminalCommand({ ...input, cwd, signal: handlers.signal })
-        },
-        write_file: async (input) => {
-          if (!await guarded('write_file', input)) return [{ type: 'json', value: { errorMessage: 'Denied by remote user.' } }]
-          const relative = typeof input.path === 'string' ? input.path : ''
-          const target = path.resolve(this.projectDir, relative)
-          const root = path.resolve(this.projectDir) + path.sep
-          if (!target.startsWith(root) || typeof input.content !== 'string') return [{ type: 'json', value: { errorMessage: 'Invalid or out-of-project file path.' } }]
-          await fs.mkdir(path.dirname(target), { recursive: true })
-          if (input.type === 'patch') {
-            const current = await fs.readFile(target, 'utf8')
-            const changed = applyPatch(current, input.content)
-            if (changed === false) return [{ type: 'json', value: { errorMessage: 'Patch did not apply.' } }]
-            await fs.writeFile(target, changed)
-          } else await fs.writeFile(target, input.content)
-          return [{ type: 'json', value: { file: relative, message: 'Approved file change applied.' } }]
-        },
-      },
+      overrideTools: createToolOverrides(this.projectDir, guarded, handlers.signal),
     })
     const result = await client.run({
       agent: 'base', prompt, previousRun: this.previousRun, costMode: 'free',
