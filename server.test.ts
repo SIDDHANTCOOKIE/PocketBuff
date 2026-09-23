@@ -126,3 +126,17 @@ describe('companion server', () => {
     expect(status).toBe(401)
   })
 })
+
+describe('static routing', () => {
+  it('serves the app shell when the URL has a query string', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fbr-static-'))
+    fs.writeFileSync(path.join(dir, 'index.html'), '<main>shell</main>')
+    const app = createCompanionServer({ runtime: new MockRuntime(), staticDir: dir, stateDir: path.join(dir, '.state') })
+    apps.push(app)
+    const { port } = await app.listen(0)
+    const response = await fetch(`http://127.0.0.1:${port}/?source=pwa`)
+    expect(response.status).toBe(200)
+    expect(await response.text()).toContain('shell')
+    expect((await fetch(`http://127.0.0.1:${port}/%2e%2e/%2e%2e/etc/passwd`)).status).toBe(404)
+  })
+})

@@ -15,6 +15,7 @@ export type ToolCard = { id: string; name: string; input: Record<string, unknown
 export type ServerMessage =
   | { type: 'ready'; runtime: 'codebuff' | 'mock'; sessions: SessionSummary[]; activeSessionId: string }
   | { type: 'sessions'; sessions: SessionSummary[]; activeSessionId: string }
+  | { type: 'user'; sessionId: string; text: string }
   | { type: 'run-start'; sessionId: string }
   | { type: 'event'; sessionId: string; event: unknown }
   | { type: 'chunk'; sessionId: string; chunk: unknown }
@@ -24,5 +25,5 @@ export type ServerMessage =
   | { type: 'approval-resolved'; sessionId: string; requestId: string; decision: ApprovalDecision }
   | { type: 'run-finish'; sessionId: string; output: unknown }
   | { type: 'run-cancelled'; sessionId: string }
-  | { type: 'error'; message: string }
+  | { type: 'error'; message: string; sessionId?: string }
   | { type: 'pong' }
