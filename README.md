@@ -2,6 +2,16 @@
 
 M1 spike for controlling a local Freebuff coding-agent runtime from a phone or web browser. It embeds Codebuff's Apache-2.0 SDK, reuses the login created by the Freebuff CLI, and exposes its event/chunk stream over a small WebSocket protocol. It does **not** PTY-wrap the TUI and it does not require a separate paid SDK key.
 
+## Install (one link)
+
+Paste this into Freebuff on the computer you want to control, and it does the setup:
+
+```
+Read https://<your-site>/install.md and follow it
+```
+
+Or run the installer yourself: `curl -fsSL https://<your-site>/install.sh | bash -s -- --yes`. The `site/` folder is the whole website (static, deploy it to Vercel as is). Afterwards: `bash ~/.pocketbuff/install.sh doctor | pair | uninstall`.
+
 ## What M1 includes
 
 - Bun/TypeScript-friendly companion server (also runs on Node 22)
