@@ -2,7 +2,7 @@
 
 Done (local, verified): M1 companion + chat, M2 tool/diff cards + approval gate, M3 installable PWA, M4 multi-session, e2e fixes (runs survive disconnect, transcript replay, ordered timeline, real diffs).
 
-## M5 - Handoff mode: continue real Freebuff CLI chats (design, not built)
+## M5 - Handoff mode: continue real Freebuff CLI chats (read + continue built 2026-09-23; see README "Terminal chats")
 
 Goal: the phone lists the chats Siddhant started in his terminal, shows their history, continues any of them, and hands them back so `freebuff --continue <chatId>` picks up the phone's turns.
 
@@ -61,3 +61,13 @@ The user deploys a small Vercel site. People paste `<site>/install.md` into free
 3. **Landing page**: one page with what it is, the one-line install command, the "paste this into freebuff" line with a copy button, and links to install.md and the repo.
 
 Open questions for the user: the domain, whether install.md is served raw (text/markdown) or also rendered, and whether the scripts are fetched from the site or from GitHub releases (pinned version plus checksum).
+
+## M7 - `pocketbuff` companion CLI (requested 2026-09-23, not built)
+
+The project is now named Pocketbuff. Freebuff itself is a closed binary, so there is no way to add slash commands inside it. Instead, a small companion CLI sits next to it:
+
+- `pocketbuff up --local` starts the phone server bound to localhost/LAN only.
+- `pocketbuff up --tailscale` starts it and exposes it on the tailnet with `tailscale serve` (HTTPS, tailnet-only).
+- `pocketbuff chats` lists the Freebuff CLI chats for the current project and toggles which ones the phone may see. Opt-in is per chat: a marker file (for example `.pocketbuff`) in the chat folder under `~/.config/manicode/projects/<project>/chats/<chat>/`. The phone's "Terminal chats" list shows only marked chats.
+
+Open questions for the user: whether new chats default to hidden (proposed: hidden until marked), and whether `up` should also print a QR code for the phone URL.
