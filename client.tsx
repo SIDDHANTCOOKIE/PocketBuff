@@ -20,7 +20,24 @@ function toolSubject(input: Record<string, unknown> = {}) {
 
 // Icons are drawn edge to edge in their viewBox so a glyph's outer edge can sit exactly on the 16px gutter.
 const Icon = ({ d, w = 16, h = 16 }: { d: string; w?: number; h?: number }) => <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d}/></svg>
-const icons = { terminal: 'M1 3.5 5.5 8 1 12.5M8.5 12.5H15', plus: 'M8 1v14M1 8h14', send: 'M8 14.5V1.5M2.5 7 8 1.5 13.5 7', close: 'M1 1l14 14M15 1 1 15', chevron: 'M1.25 3 7.25 8l-6 5' }
+const icons = { terminal: 'M1 3.5 5.5 8 1 12.5M8.5 12.5H15', plus: 'M8 1v14M1 8h14', send: 'M8 14.5V1.5M2.5 7 8 1.5 13.5 7', close: 'M1 1l14 14M15 1 1 15', chevron: 'M1.25 3 7.25 8l-6 5', down: 'M8 1.5v13M2.5 9 8 14.5 13.5 9', check: 'M1.5 8.5 6 13 14.5 3' }
+
+// Muted syntax colouring for code blocks: comments, strings, numbers and keywords only.
+const KEYWORDS = /^(?:const|let|var|function|return|if|else|for|while|switch|case|break|continue|import|from|export|default|class|extends|new|async|await|try|catch|throw|type|interface|def|lambda|with|as|in|of|pass|yield|fn|pub|use|impl|struct|enum|match|true|false|null|undefined|None|True|False|self|this)$/
+const HASH_COMMENTS = /^(?:py|python|sh|bash|shell|zsh|yaml|yml|toml|rb|ruby|dockerfile|make|r)$/i
+function highlight(code: string, lang: string): React.ReactNode[] {
+  const comment = HASH_COMMENTS.test(lang) ? String.raw`#.*$` : String.raw`\/\/.*$|\/\*[\s\S]*?\*\/`
+  const re = new RegExp(`(${comment})|("(?:\\\\.|[^"\\\\\n])*"|'(?:\\\\.|[^'\\\\\n])*'|\`(?:\\\\.|[^\`\\\\])*\`)|\\b(\\d+(?:\\.\\d+)?)\\b|\\b([A-Za-z_]\\w*)\\b`, 'gm')
+  const out: React.ReactNode[] = []; let last = 0, m: RegExpExecArray | null, k = 0
+  while ((m = re.exec(code))) {
+    if (m[4] && !KEYWORDS.test(m[4])) continue
+    if (m.index > last) out.push(code.slice(last, m.index))
+    const cls = m[1] ? 'tok-comment' : m[2] ? 'tok-string' : m[3] ? 'tok-number' : 'tok-keyword'
+    out.push(<span key={k++} className={cls}>{m[0]}</span>); last = m.index + m[0].length
+  }
+  if (last < code.length) out.push(code.slice(last))
+  return out
+}
 
 /** Minimal Markdown for replies: fenced code, bullet/numbered lists, `code` and **bold**. Builds React nodes, never HTML. */
 function inline(text: string, key: string): React.ReactNode[] {
@@ -34,7 +51,7 @@ function Markdown({ text }: { text: string }) {
   const lines = text.split('\n')
   for (let i = 0; i < lines.length;) {
     const line = lines[i]
-    if (line.startsWith('```')) { const body: string[] = []; i++; while (i < lines.length && !lines[i].startsWith('```')) body.push(lines[i++]); i++; blocks.push(<pre key={i} className="codeblock">{body.join('\n')}</pre>); continue }
+    if (line.startsWith('```')) { const lang = line.slice(3).trim(), body: string[] = []; i++; while (i < lines.length && !lines[i].startsWith('```')) body.push(lines[i++]); i++; blocks.push(<pre key={i} className="codeblock">{lang && <span className="lang">{lang}</span>}<code>{highlight(body.join('\n'), lang)}</code></pre>); continue }
     const bullet = /^\s*(?:[-*]|\d+\.)\s+/
     if (bullet.test(line)) { const ordered = /^\s*\d+\./.test(line), items: string[] = []; while (i < lines.length && bullet.test(lines[i])) items.push(lines[i++].replace(bullet, '')); const List = ordered ? 'ol' : 'ul'; blocks.push(<List key={i}>{items.map((item, j) => { const task = /^\[( |x|X)\]\s+/.exec(item); return <li key={j} className={task ? 'task' : undefined}>{task && <span className={`check ${task[1] === ' ' ? '' : 'done'}`} aria-label={task[1] === ' ' ? 'to do' : 'done'}/>}{inline(task ? item.slice(task[0].length) : item, `${i}-${j}`)}</li> })}</List>); continue }
     const heading = /^#{1,6}\s+(.*)$/.exec(line)
@@ -77,7 +94,7 @@ function App() {
   const [items, setItems] = useState<Item[]>([]), [busy, setBusy] = useState<Record<string, boolean>>({}), [text, setText] = useState('')
   const [cliList, setCliList] = useState<{ sessionId: string; chats: CliChatSummary[] } | null>(null), [attached, setAttached] = useState<Record<string, string | null>>({})
   const socket = useRef<WebSocket | null>(null), feed = useRef<HTMLElement | null>(null), activeRef = useRef(''), input = useRef<HTMLTextAreaElement | null>(null)
-  const send = (value: unknown) => socket.current?.readyState === WebSocket.OPEN && socket.current.send(JSON.stringify(value))
+  const send = (value: unknown): boolean => { if (socket.current?.readyState !== WebSocket.OPEN) return false; socket.current.send(JSON.stringify(value)); return true }
 
   useEffect(() => {
     if (token) { localStorage.setItem('freebuff-token', token); if (location.hash) history.replaceState(null, '', location.pathname + location.search) }
@@ -119,7 +136,21 @@ function App() {
     connect()
     return () => { closed = true; clearTimeout(timer); socket.current?.close() }
   }, [token])
-  useEffect(() => { feed.current?.scrollTo({ top: feed.current.scrollHeight, behavior: 'smooth' }) }, [items, active])
+  // Follow new output only while the reader is at the bottom; otherwise offer a jump-to-latest pill.
+  const [pinned, setPinned] = useState(true), [unseen, setUnseen] = useState(false)
+  const lastTop = useRef(0)
+  const toLatest = (behavior: ScrollBehavior = 'smooth') => { setPinned(true); setUnseen(false); feed.current?.scrollTo({ top: feed.current.scrollHeight, behavior }) }
+  // Only an upward scroll by the reader unpins; programmatic smooth scrolls move down and never do.
+  const onScroll = () => {
+    const el = feed.current; if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    if (atBottom) { setPinned(true); setUnseen(false) } else if (el.scrollTop < lastTop.current - 4) setPinned(false)
+    lastTop.current = el.scrollTop
+  }
+  // Only output in the open session counts as unseen; other sessions streaming in the background do not.
+  const feedSignature = items.filter(item => item.sessionId === active).map(item => `${item.key}:${item.text.length}:${item.status ?? ''}`).join('|')
+  useEffect(() => { if (pinned) toLatest(); else setUnseen(true) }, [feedSignature])
+  useEffect(() => { setPinned(true); toLatest('auto') }, [active])
   // Grow the composer with its content, up to the CSS max-height.
   useEffect(() => { const el = input.current; if (!el) return; el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px` }, [text])
 
@@ -127,18 +158,21 @@ function App() {
   const current = sessions.find(session => session.id === active)
   const submit = (event: React.FormEvent) => { event.preventDefault(); const value = text.trim(); if (!value || running || !active) return; send({ type: 'chat', sessionId: active, text: value }); setText('') }
   const create = () => { const projectDir = prompt('Absolute project path'); if (!projectDir) return; const name = prompt('Session name', projectDir.split('/').pop() || 'Project') || 'Project'; send({ type: 'session-create', name, projectDir }) }
-  const decide = (item: Item, decision: 'approve' | 'deny') => send({ type: 'approval', sessionId: item.sessionId, requestId: item.requestId, decision })
+  const [pressed, setPressed] = useState<Record<string, 'approve' | 'deny'>>({})
+  // Lock the buttons only once the decision actually left the socket; a reconnect clears locks so a lost decision can be retried.
+  const decide = (item: Item, decision: 'approve' | 'deny') => { const id = item.requestId; if (!id || pressed[id]) return; if (send({ type: 'approval', sessionId: item.sessionId, requestId: id, decision })) setPressed(v => ({ ...v, [id]: decision })) }
+  useEffect(() => { if (status === 'connected') setPressed({}) }, [status])
 
   const renderCard = (item: Item) => {
     if (item.card === 'diff') { const { add, del } = diffStats(item.text); return <article key={item.key} className="card diff-card"><header><code className="path">{item.title}</code><span className="stats"><span className="plus">+{add}</span><span className="minus">−{del}</span></span></header><DiffView patch={item.text}/></article> }
     if (item.card === 'approval') {
-      const waiting = item.status === 'waiting'
-      return <article key={item.key} className={`card approval ${item.status ?? ''}`}>
-        <header><span className="label">{waiting ? 'Needs approval' : item.status === 'approve' ? 'Approved' : 'Denied'}</span><code className="tool">{item.title}</code></header>
+      const waiting = item.status === 'waiting', press = item.requestId ? pressed[item.requestId] : undefined
+      return <article key={item.key} className={`card approval ${item.status ?? ''} ${press ? `pressed-${press}` : ''}`}>
+        <header><span className="label">{!waiting && item.status === 'approve' && <Icon d={icons.check}/>}{waiting ? 'Needs approval' : item.status === 'approve' ? 'Approved' : 'Denied'}</span><code className="tool">{item.title}</code></header>
         {item.subtitle && !item.text.startsWith('$ ') && <code className="path">{item.subtitle}</code>}
         {item.detail && !/can change the project/.test(item.detail) && <p className="reason">{item.detail}</p>}
         {looksLikePatch(item.text) ? <DiffView patch={item.text}/> : <pre>{item.text}</pre>}
-        {item.requestId && waiting && <div className="actions"><button className="ghost" onClick={() => decide(item, 'deny')}>Deny</button><button className="primary" onClick={() => decide(item, 'approve')}>Approve</button></div>}
+        {item.requestId && (waiting || press) && <div className={`actions-wrap ${waiting ? '' : 'gone'}`}><div><div className="actions"><button className="ghost" disabled={!!press} onClick={() => decide(item, 'deny')}>Deny</button><button className="primary" disabled={!!press} onClick={() => decide(item, 'approve')}>Approve</button></div></div></div>}
       </article>
     }
     return <details key={item.key} className={`card tool ${item.status}`}><summary><span className="dot"/><code className="tool">{item.title}</code><span className="subject">{item.subtitle}</span><span className="chev"><Icon d={icons.chevron} w={8}/></span></summary>{(item.detail ?? item.text) && <pre>{item.detail ?? item.text}</pre>}</details>
@@ -154,12 +188,13 @@ function App() {
     </header>
     <nav className="rail">{sessions.map(session => <button key={session.id} className={session.id === active ? 'active' : ''} onClick={() => send({ type: 'session-select', sessionId: session.id })}>{busy[session.id] && <i className="live" aria-label="running"/>}{session.name}</button>)}</nav>
     {attached[active] && <div className="attached"><span><Icon d={icons.terminal}/>Terminal chat <code>{attached[active]}</code></span><button className="link" onClick={() => send({ type: 'cli-open', sessionId: active, chatId: null })}>Detach</button></div>}
-    <section ref={feed} className="feed" key={active}>
+    <section ref={feed} className="feed" key={active} onScroll={onScroll}>
       {visible.length === 0 && <div className="empty"><h2>What should we <em>build</em>?</h2><p><code>{current?.projectDir}</code></p><button className="quiet" onClick={() => send({ type: 'cli-list', sessionId: active })}>Continue a terminal chat<Icon d={icons.chevron} w={8}/></button></div>}
       {visible.map(item => item.kind === 'card' ? renderCard(item)
         : item.kind === 'system' ? <p key={item.key} className={item.text.startsWith('Error') ? 'system error' : 'system'}>{item.text}</p>
         : <article key={item.key} className={item.kind}>{item.kind === 'assistant' ? <Markdown text={item.text}/> : item.text}{running && item.key === lastAssistant && <span className="caret" aria-hidden="true"/>}</article>)}
     </section>
+    <div className="latest-anchor">{!pinned && unseen && <button className="latest" onClick={() => toLatest()}>Latest<Icon d={icons.down}/></button>}</div>
     <form className="composer" onSubmit={submit}>
       <textarea ref={input} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit() } }} placeholder={attached[active] ? 'Continue the terminal chat' : 'Ask Freebuff'} rows={1}/>
       {running
