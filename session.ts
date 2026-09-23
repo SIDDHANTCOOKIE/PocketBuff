@@ -22,6 +22,8 @@ export class SessionManager {
     const session: Session = { id, name: name.trim() || path.basename(projectDir), projectDir: path.resolve(projectDir), updatedAt: new Date().toISOString(), runtime: this.createRuntime(path.resolve(projectDir), id) }
     this.sessions.set(id, session); this.save(); return session
   }
+  /** The session for this project folder, created if none exists yet. */
+  ensure(projectDir: string): Session { const dir = path.resolve(projectDir); return [...this.sessions.values()].find((session) => session.projectDir === dir) ?? this.create(path.basename(dir) || 'Project', dir) }
   touch(id: string) { const session = this.sessions.get(id); if (session) { session.updatedAt = new Date().toISOString(); this.save() } }
   delete(id: string): boolean { const deleted = this.sessions.delete(id); if (deleted) this.save(); return deleted }
 

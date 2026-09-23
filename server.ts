@@ -8,7 +8,8 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { ApprovalGate } from './approval.js'
 import { messagesForEvent } from './events.js'
 import type { ChatRuntime } from './runtime.js'
-import { CodebuffRuntime, MockRuntime } from './runtime.js'
+import { CodebuffRuntime, MockRuntime, defaultSlotClient, releaseSharedSlot } from './runtime.js'
+import { readFreebuffToken } from './auth.js'
 import { SessionManager } from './session.js'
 import type { ClientMessage, ServerMessage, ToolCard } from './protocol.js'
 
@@ -38,7 +39,9 @@ export function createCompanionServer(options: ServerOptions = {}) {
   const staticDir = options.staticDir ?? path.resolve('dist/client')
   const stateDir = options.stateDir ?? path.join(os.homedir(), '.config', 'freebuff-remote')
   const mock = options.runtime?.name === 'mock' || process.env.FREEBUFF_REMOTE_MOCK === '1'
-  const sessions = new SessionManager(path.join(stateDir, 'sessions.json'), (projectDir, id) => options.runtime ?? (mock ? new MockRuntime() : new CodebuffRuntime(projectDir, undefined, path.join(stateDir, 'sessions', `${id}.json`))), defaultProjectDir)
+  const sessions = new SessionManager(path.join(stateDir, 'sessions.json'), (projectDir, id) => { if (options.runtime) return options.runtime; if (mock) return new MockRuntime(); const token = readFreebuffToken(); return new CodebuffRuntime(projectDir, token, path.join(stateDir, 'sessions', `${id}.json`), defaultSlotClient(token, stateDir)) }, defaultProjectDir)
+  // An explicitly configured project folder wins over whatever session was saved last, so a new FREEBUFF_PROJECT_DIR is not silently ignored.
+  const explicitProject = options.projectDir || process.env.FREEBUFF_PROJECT_DIR ? sessions.ensure(defaultProjectDir).id : undefined
   const activeRuns = new Map<string, RunContext>()
   // Session-scoped messages are kept so a phone that reloads or reconnects sees the same transcript and pending approvals.
   const history = new Map<string, ServerMessage[]>()
@@ -70,7 +73,7 @@ export function createCompanionServer(options: ServerOptions = {}) {
   })
 
   wss.on('connection', (socket) => {
-    let activeSessionId = sessions.list()[0].id
+    let activeSessionId = (explicitProject && sessions.get(explicitProject) ? explicitProject : undefined) ?? sessions.list()[0].id
     const sessionUpdate = () => send(socket, { type: 'sessions', sessions: sessions.list(), activeSessionId })
     clients.add(socket)
     send(socket, { type: 'ready', runtime: mock ? 'mock' : 'codebuff', sessions: sessions.list(), activeSessionId })
@@ -108,8 +111,13 @@ export function createCompanionServer(options: ServerOptions = {}) {
     socket.on('close', () => { clients.delete(socket) })
   })
 
-  return { server, listen(port = options.port ?? Number(process.env.PORT || 8787), host = options.host ?? process.env.HOST ?? '127.0.0.1') { return new Promise<{ port: number; host: string }>((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { const address = server.address(); resolve({ port: typeof address === 'object' && address ? address.port : port, host }) }) }) }, close() { for (const run of activeRuns.values()) run.abort.abort(); return new Promise<void>((resolve, reject) => { wss.close(); server.close((e) => e ? reject(e) : resolve()) }) } }
+  return { server, listen(port = options.port ?? Number(process.env.PORT || 8787), host = options.host ?? process.env.HOST ?? '127.0.0.1') { return new Promise<{ port: number; host: string }>((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { const address = server.address(); resolve({ port: typeof address === 'object' && address ? address.port : port, host }) }) }) }, close() { for (const run of activeRuns.values()) run.abort.abort(); return new Promise<void>((resolve, reject) => { wss.close(); server.close((e) => e ? reject(e) : resolve()) }).finally(() => mock || options.runtime ? undefined : releaseSharedSlot()) } }
 }
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
-if (isMain) { const app = createCompanionServer(); app.listen().then(({ host, port }) => console.log(`Freebuff Remote listening on http://${host}:${port}`)).catch((e) => { console.error(e); process.exit(1) }) }
+if (isMain) {
+  const app = createCompanionServer()
+  app.listen().then(({ host, port }) => console.log(`Freebuff Remote listening on http://${host}:${port}`)).catch((e) => { console.error(e); process.exit(1) })
+  // Give the Freebuff slot back on exit so the user's own CLI can be admitted right away.
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { const timer = setTimeout(() => process.exit(0), 5000); app.close().catch(() => undefined).finally(() => { clearTimeout(timer); process.exit(0) }) })
+}

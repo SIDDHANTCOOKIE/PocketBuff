@@ -17,3 +17,14 @@ describe('session manager', () => {
     expect(restored.get(second.id)?.projectDir).toBe('/tmp/two')
   })
 })
+
+describe('explicit project folder', () => {
+  it('reuses or creates the session for a project folder', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-ensure-'))
+    const sessions = new SessionManager(path.join(dir, 'sessions.json'), () => ({ name: 'mock', run: async () => null }), path.join(dir, 'a'))
+    const first = sessions.ensure(path.join(dir, 'b'))
+    expect(first.projectDir).toBe(path.join(dir, 'b'))
+    expect(sessions.ensure(path.join(dir, 'b') + '/').id).toBe(first.id)
+    expect(sessions.list()).toHaveLength(2)
+  })
+})
