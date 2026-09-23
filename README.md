@@ -14,7 +14,9 @@ Or run the installer yourself: `curl -fsSL https://<your-site>/install.sh | bash
 
 ### Deploy the site (Vercel CLI + GitHub Actions)
 
-`site/` is deployed by `.github/workflows/deploy-site.yml` on every push to `main` that touches `site/**`. You can also run it by hand from the Actions tab (Deploy site > Run workflow).
+`site/` is deployed by `.github/workflows/deploy-site.yml` on every push to `main` that touches `site/**`. You can also run it by hand from the Actions tab (Vercel Production Deployment > Run workflow).
+
+Why this route: Vercel's free Hobby plan doesn't let several people deploy to one project (collaborators are a paid Team feature). A token plus GitHub Actions lets any push to `main` deploy without anyone joining a Vercel team.
 
 > Do **not** import or connect this repo in the Vercel dashboard. The Vercel Git integration must stay off; GitHub Actions does the deploys.
 
