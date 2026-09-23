@@ -115,6 +115,25 @@ describe('companion server', () => {
     expect(response.headers.get('content-type')).toContain('text/css')
   })
 
+  it('rejects malformed messages without stopping the server', async () => {
+    const app = createCompanionServer({ runtime: new MockRuntime(), token: 'secret', stateDir: fs.mkdtempSync(path.join(os.tmpdir(), 'fbr-')) })
+    apps.push(app)
+    const { port } = await app.listen(0)
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=secret`)
+    const errors: string[] = []
+    await new Promise<void>((resolve, reject) => {
+      ws.on('error', reject)
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString())
+        if (message.type === 'ready') { for (const bad of ['null', '{"type":"chat"}', '{"type":"session-create","name":1}', '{"type":"approval","sessionId":"x","requestId":"y","decision":"maybe"}']) ws.send(bad); ws.send(JSON.stringify({ type: 'ping' })) }
+        if (message.type === 'error') errors.push(message.message)
+        if (message.type === 'pong') resolve()
+      })
+    })
+    expect(errors).toEqual(['Malformed message', 'Malformed message', 'Malformed message', 'Malformed message'])
+    ws.close()
+  })
+
   it('rejects the wrong shared token', async () => {
     const app = createCompanionServer({ runtime: new MockRuntime(), token: 'secret' })
     apps.push(app)

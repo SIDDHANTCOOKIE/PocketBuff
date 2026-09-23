@@ -115,6 +115,6 @@ Codebuff/Freebuff backend + local SDK tools
 - touch-first mobile layout, Enter-to-send, auto-scroll, horizontal session switcher
 - Tailscale path remains localhost-only: `tailscale serve --bg http://127.0.0.1:8787`; validate with `tailscale serve status` and open its HTTPS URL on the phone
 - persisted multi-session registry with one independent runtime/checkpoint/approval/cancel context per project
-- session create/select/delete protocol; concurrent runs are allowed across different sessions
+- session create/select/delete protocol; the server allows runs in different sessions at the same time, but Freebuff free mode gives one active slot per account, so with the real runtime a second concurrent run may wait or be refused by the backend
 
 The automated environment used for this spike does not have a Tailscale daemon, so the Serve command itself is documented and structurally compatible but must be run and verified on the user's dev machine.

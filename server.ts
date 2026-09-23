@@ -17,6 +17,19 @@ type RunContext = { abort: AbortController; approvals: ApprovalGate; tools: Map<
 const HISTORY_LIMIT = 2000
 
 function send(socket: WebSocket, value: ServerMessage) { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)) }
+const str = (value: unknown) => typeof value === 'string'
+function isClientMessage(value: unknown): value is ClientMessage {
+  if (!value || typeof value !== 'object') return false
+  const m = value as Record<string, unknown>
+  switch (m.type) {
+    case 'ping': return true
+    case 'chat': return str(m.sessionId) && str(m.text)
+    case 'approval': return str(m.sessionId) && str(m.requestId) && (m.decision === 'approve' || m.decision === 'deny')
+    case 'cancel': case 'session-select': case 'session-delete': return str(m.sessionId)
+    case 'session-create': return str(m.name) && str(m.projectDir) && (m.projectDir as string).trim() !== ''
+    default: return false
+  }
+}
 function safeEqual(a: string, b: string) { const aa = Buffer.from(a); const bb = Buffer.from(b); return aa.length === bb.length && crypto.timingSafeEqual(aa, bb) }
 
 export function createCompanionServer(options: ServerOptions = {}) {
@@ -65,6 +78,8 @@ export function createCompanionServer(options: ServerOptions = {}) {
     socket.on('message', async (raw) => {
       let message: ClientMessage
       try { message = JSON.parse(raw.toString()) as ClientMessage } catch { send(socket, { type: 'error', message: 'Invalid JSON' }); return }
+      // The handler is async, so a malformed payload that throws would become an unhandled rejection and stop the server.
+      if (!isClientMessage(message)) { send(socket, { type: 'error', message: 'Malformed message' }); return }
       if (message.type === 'ping') { send(socket, { type: 'pong' }); return }
       if (message.type === 'session-create') { const session = sessions.create(message.name, message.projectDir); activeSessionId = session.id; sessionUpdate(); return }
       if (message.type === 'session-select') { if (!sessions.get(message.sessionId)) send(socket, { type: 'error', message: 'Unknown session' }); else { activeSessionId = message.sessionId; sessionUpdate() }; return }
