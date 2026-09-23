@@ -46,3 +46,18 @@ New companion work this needs:
 - `freebuff-remote doctor`: checks tailscale status, serve config, service health, Freebuff login, and prints fixes.
 
 Risks: package-manager differences across Linux distros, Windows service permissions, and the free-mode one-slot rule (tell users the phone and terminal take turns).
+
+### M6 distribution: agent-installable install.md (added 2026-09-23, not built)
+
+The user deploys a small Vercel site. People paste `<site>/install.md` into freebuff (or any coding agent), and the agent does the whole setup. M6 now ships three artifacts:
+
+1. **install.sh / install.ps1**: the scripts above, with a `--yes` non-interactive mode and machine-readable status lines (`STEP <name> OK|FAIL <detail>`) so an agent can follow progress.
+2. **install.md**: written for an LLM to execute, not for a human to read:
+   - Exact commands per OS, each followed by a verification command and its expected output (for example `node -v` shows >= 20, `tailscale status` exits 0, `curl -s 127.0.0.1:8787/healthz` returns `"ok":true`).
+   - Fallback paths for each step (package manager missing, no sudo, Windows without winget, Tailscale already logged in on another account).
+   - Which steps need the human (Tailscale login, Freebuff login, HTTPS cert approval), with the exact words to tell them and how to detect that they finished.
+   - Stop rules: never paste tokens into chat, never disable a firewall, stop and report on repeated failure.
+   - The final message to the human: the phone URL, the pairing code, and the one-slot note (the phone and the terminal take turns).
+3. **Landing page**: one page with what it is, the one-line install command, the "paste this into freebuff" line with a copy button, and links to install.md and the repo.
+
+Open questions for the user: the domain, whether install.md is served raw (text/markdown) or also rendered, and whether the scripts are fetched from the site or from GitHub releases (pinned version plus checksum).
