@@ -188,3 +188,17 @@ code.tool { color: var(--text); flex: none; }
 @keyframes pill { from { opacity: 0; transform: translate(-50%, 8px); } }
 @keyframes ring { 50% { box-shadow: inset 0 0 0 1px rgba(237, 237, 239, .28); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* Pairing: same bar as the app, one centred column on the 16px gutter */
+.pair-body { width: 100%; margin: auto 0; padding: var(--s8) var(--s4); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s2); text-align: center; }
+.pair-body h2 { font: 400 40px/48px var(--serif); letter-spacing: -.02em; }
+.pair-body h2 em { color: var(--muted); }
+.pair-body > p { color: var(--muted); }
+.pair-body .code { height: 64px; margin-top: var(--s4); border: 0; border-radius: var(--r-md); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--text); font: 400 32px/40px var(--mono); letter-spacing: .32em; text-indent: .32em; text-align: center; outline: none; transition: box-shadow .15s; }
+.pair-body .code:focus { box-shadow: inset 0 0 0 1px var(--focus); }
+.pair-body .code::placeholder { color: var(--faint); }
+.pair-body .primary { height: 48px; margin-top: var(--s2); border-radius: var(--r-md); font-weight: 500; transition: opacity .15s; }
+.pair-body .primary:disabled { opacity: .32; }
+.pair-body .hint { margin-top: var(--s2); font-size: 12px; line-height: 16px; color: var(--faint); }
+.pair-body .hint.error { color: var(--bad); }
+.pair-body .hint code { color: var(--muted); overflow-wrap: anywhere; }

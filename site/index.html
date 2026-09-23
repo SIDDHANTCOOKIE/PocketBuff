@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pocketbuff - Freebuff, from your phone</title>
+<meta name="description" content="Control the Freebuff CLI on your computer from your phone. Private over Tailscale, free, set up by pasting one line into Freebuff.">
+<meta name="theme-color" content="#0a0a0b">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=Geist+Mono&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+/* Same system as the app: strict 4px grid, 16px gutters, borders as inset shadows. */
+:root {
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s8: 48px; --s10: 64px;
+  --r-sm: 8px; --r-md: 12px;
+  --bg: #0a0a0b; --surface: #121214; --raised: #19191c; --hover: #202024;
+  --line: rgba(255, 255, 255, .07); --line-strong: rgba(255, 255, 255, .12);
+  --text: #ededef; --muted: #8a8a93; --faint: #5c5c64; --ok: #5fd08a;
+  --sans: 'Geist', ui-sans-serif, system-ui, sans-serif; --mono: 'Geist Mono', ui-monospace, monospace; --serif: 'Instrument Serif', Georgia, serif;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  color-scheme: dark; background: var(--bg); color: var(--text);
+  font: 400 16px/24px var(--sans); -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+h1, h2, p, ol { margin: 0; }
+a { color: inherit; }
+button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid rgba(237, 237, 239, .5); outline-offset: 2px; }
+code { font: 400 13px/20px var(--mono); }
+
+.page { width: min(640px, 100%); margin: 0 auto; padding: 0 var(--s4) calc(var(--s8) + env(safe-area-inset-bottom)); }
+.top { height: 56px; display: flex; align-items: center; justify-content: space-between; }
+.wordmark { font: 400 28px/40px var(--serif); letter-spacing: -.01em; text-decoration: none; }
+.top a.link { font-size: 14px; line-height: 20px; color: var(--muted); text-decoration: none; transition: color .15s; }
+.top a.link:hover { color: var(--text); }
+
+.hero { padding: var(--s10) 0 var(--s8); }
+.hero h1 { font: 400 56px/56px var(--serif); letter-spacing: -.03em; }
+.hero h1 em { color: var(--muted); padding-left: .06em; } /* italic p overhangs its box; pull it back onto the gutter */
+.hero p { margin-top: var(--s4); max-width: 480px; color: var(--muted); }
+
+.label { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+.paste { margin-top: var(--s3); border-radius: var(--r-md); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.paste .line { padding: var(--s4); display: flex; align-items: center; gap: var(--s3); }
+.paste code { flex: 1; min-width: 0; color: var(--text); overflow-wrap: anywhere; }
+.copy { flex: none; height: 40px; min-width: 80px; padding: 0 var(--s4); border-radius: var(--r-sm); background: var(--text); color: var(--bg); font-size: 14px; line-height: 20px; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: var(--s2); transition: transform .1s, background .2s; }
+.copy:active { transform: scale(.97); }
+.copy.done { background: var(--ok); }
+.copy svg { width: 12px; height: 12px; }
+.paste .alt { padding: var(--s3) var(--s4); box-shadow: inset 0 1px var(--line); font-size: 12px; line-height: 16px; color: var(--faint); }
+.paste .alt code { font-size: 12px; line-height: 16px; color: var(--muted); }
+
+.steps { margin-top: var(--s8); padding: 0; list-style: none; display: grid; gap: var(--s2); counter-reset: step; }
+.steps li { counter-increment: step; padding: var(--s4); border-radius: var(--r-md); box-shadow: inset 0 0 0 1px var(--line); display: grid; grid-template-columns: 24px 1fr; column-gap: var(--s3); }
+.steps li::before { content: counter(step); font: 400 20px/24px var(--serif); color: var(--faint); }
+.steps h2 { font-size: 16px; line-height: 24px; font-weight: 500; }
+.steps p { grid-column: 2; font-size: 14px; line-height: 20px; color: var(--muted); }
+
+.facts { margin-top: var(--s8); display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4) var(--s4); }
+.facts div { display: grid; gap: var(--s1); }
+.facts b { font-weight: 500; font-size: 14px; line-height: 20px; }
+.facts span { font-size: 14px; line-height: 20px; color: var(--muted); }
+
+footer { margin-top: var(--s10); padding-top: var(--s4); box-shadow: inset 0 1px var(--line); display: flex; justify-content: space-between; font-size: 12px; line-height: 16px; color: var(--faint); }
+footer nav { display: flex; gap: var(--s4); }
+footer a { text-decoration: none; transition: color .15s; }
+footer a:hover { color: var(--text); }
+
+@media (min-width: 720px) { .hero { padding-top: 96px; } .hero h1 { font-size: 72px; line-height: 72px; } }
+@media (prefers-reduced-motion: no-preference) {
+  .hero, .paste-wrap, .steps, .facts { animation: rise .6s var(--ease) both; }
+  .paste-wrap { animation-delay: .06s; } .steps { animation-delay: .12s; } .facts { animation-delay: .18s; }
+}
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <a class="wordmark" href="./">Pocketbuff</a>
+    <a class="link" href="https://github.com/SIDDHANTCOOKIE/freebuff-remote-control">GitHub</a>
+  </header>
+
+  <section class="hero">
+    <h1>Freebuff, in your <em>pocket</em>.</h1>
+    <p>Chat with the Freebuff on your computer from your phone. Approve edits, watch diffs, pick up terminal chats. Private over your own Tailscale network, and free.</p>
+  </section>
+
+  <section class="paste-wrap">
+    <p class="label">Paste this into Freebuff</p>
+    <div class="paste">
+      <div class="line">
+        <code id="prompt">Read https://raw.githubusercontent.com/SIDDHANTCOOKIE/freebuff-remote-control/main/site/install.md and follow it</code>
+        <button class="copy" id="copy" type="button" aria-label="Copy the install line">Copy</button>
+      </div>
+      <p class="alt">Or in a terminal: <code id="curl">curl -fsSL https://raw.githubusercontent.com/SIDDHANTCOOKIE/freebuff-remote-control/main/site/install.sh | bash -s -- --yes</code></p>
+    </div>
+  </section>
+
+  <ol class="steps">
+    <li><h2>Freebuff sets it up</h2><p>Installs everything it needs, starts Pocketbuff in the background and puts it on your tailnet.</p></li>
+    <li><h2>You sign in to Tailscale once</h2><p>The only step that needs you. Freebuff gives you the link.</p></li>
+    <li><h2>Open the link on your phone</h2><p>It pairs with a one-time code. Add it to your home screen.</p></li>
+  </ol>
+
+  <section class="facts">
+    <div><b>Private</b><span>Only devices on your tailnet can reach it.</span></div>
+    <div><b>Free</b><span>Uses your Freebuff login. No API key.</span></div>
+    <div><b>Yours</b><span>Runs on your machine, in your project.</span></div>
+    <div><b>Undo-able</b><span>One command removes it all.</span></div>
+  </section>
+
+  <footer>
+    <span>Pocketbuff</span>
+    <nav><a href="install.md">install.md</a><a href="https://github.com/SIDDHANTCOOKIE/freebuff-remote-control">Source</a></nav>
+  </footer>
+</div>
+<script>
+  // Point both lines at wherever this folder is deployed.
+  if (location.protocol.startsWith('http')) {
+    const base = location.origin + location.pathname.replace(/[^/]*$/, '')
+    document.getElementById('prompt').textContent = `Read ${base}install.md and follow it`
+    document.getElementById('curl').textContent = `curl -fsSL ${base}install.sh | bash -s -- --yes`
+  }
+  const button = document.getElementById('copy')
+  button.addEventListener('click', async () => {
+    const text = document.getElementById('prompt').textContent
+    try { await navigator.clipboard.writeText(text) } catch {
+      const area = Object.assign(document.createElement('textarea'), { value: text }); document.body.append(area); area.select(); document.execCommand('copy'); area.remove()
+    }
+    button.classList.add('done'); button.textContent = 'Copied'
+    setTimeout(() => { button.classList.remove('done'); button.textContent = 'Copy' }, 1600)
+  })
+</script>
+</body>
+</html>

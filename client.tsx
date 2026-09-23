@@ -88,8 +88,39 @@ function diffStats(patch: string) { let add = 0, del = 0; for (const line of pat
 const patchPath = (patch: string) => /^(?:\+\+\+ b\/|Index: )(.+)$/m.exec(patch)?.[1]?.trim() || 'Changes'
 const looksLikePatch = (text: string) => /^@@ /m.test(text)
 
-function App() {
-  const [token] = useState(() => new URLSearchParams(location.hash.slice(1)).get('token') || localStorage.getItem('freebuff-token') || '')
+/** Shown until the phone has a token: enter the 6-digit code from `install.sh pair`, or arrive with it in the link (#pair=123456). */
+function Pair({ onToken }: { onToken: (token: string) => void }) {
+  const [code, setCode] = useState(() => (new URLSearchParams(location.hash.slice(1)).get('pair') || '').replace(/\D/g, '').slice(0, 6))
+  const [state, setState] = useState<'idle' | 'busy' | 'wrong'>('idle')
+  const submit = async (value = code) => {
+    if (value.length !== 6 || state === 'busy') return
+    setState('busy')
+    try {
+      const res = await fetch('/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: value }) })
+      const data = await res.json() as { token?: string }
+      if (res.ok && data.token) { history.replaceState(null, '', location.pathname + location.search); onToken(data.token); return }
+    } catch { /* network failure reads the same as a wrong code: try again */ }
+    setState('wrong')
+  }
+  useEffect(() => { if (code.length === 6) void submit(code) }, [])
+  return <main className="pair">
+    <header className="top"><div className="brand"><h1>Pocketbuff</h1></div></header>
+    <form className="pair-body" onSubmit={e => { e.preventDefault(); void submit() }}>
+      <h2>Pair this <em>phone</em></h2>
+      <p>Enter the 6-digit code from your computer.</p>
+      <input className="code" value={code} onChange={e => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setState('idle') }} inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" aria-label="Pairing code" autoFocus/>
+      <button className="primary" disabled={code.length !== 6 || state === 'busy'}>{state === 'busy' ? 'Pairing' : 'Pair'}</button>
+      <p className={`hint ${state === 'wrong' ? 'error' : ''}`}>{state === 'wrong' ? 'That code is wrong or expired. Ask your computer for a new one.' : <>No code? Run <code>bash ~/.pocketbuff/install.sh pair</code></>}</p>
+    </form>
+  </main>
+}
+
+function Root() {
+  const [token, setToken] = useState(() => new URLSearchParams(location.hash.slice(1)).get('token') || localStorage.getItem('freebuff-token') || '')
+  return token ? <App token={token}/> : <Pair onToken={setToken}/>
+}
+
+function App({ token }: { token: string }) {
   const [status, setStatus] = useState('connecting'), [sessions, setSessions] = useState<SessionSummary[]>([]), [active, setActive] = useState('')
   const [items, setItems] = useState<Item[]>([]), [busy, setBusy] = useState<Record<string, boolean>>({}), [text, setText] = useState('')
   const [cliList, setCliList] = useState<{ sessionId: string; chats: CliChatSummary[] } | null>(null), [attached, setAttached] = useState<Record<string, string | null>>({})
@@ -211,4 +242,4 @@ function App() {
     </div>}
   </main>
 }
-createRoot(document.getElementById('root')!).render(<App />)
+createRoot(document.getElementById('root')!).render(<Root />)
