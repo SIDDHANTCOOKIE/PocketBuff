@@ -207,12 +207,12 @@ ts_state() { "$ts" status --json 2>/dev/null | "$node_bin" -e 'let s="";process.
 step_tailscale() {
   if ! find_ts; then
     if [ "$os" = darwin ]; then
-      if have brew && confirm "Install Tailscale with Homebrew?"; then brew install --cask tailscale >/dev/null 2>&1; fi
+      if have brew && confirm "Install Tailscale with Homebrew?"; then with_timeout 300 brew install --cask tailscale </dev/null >/dev/null 2>&1; fi  # never wait on a password prompt
       if find_ts; then ask tailscale "Tailscale is installed. Ask the human to open Tailscale from Applications, allow it, and sign in (same account as on their phone)."
       else ask tailscale "Ask the human to install Tailscale from https://tailscale.com/download/mac , open it, and sign in (same account as on their phone)."; fi
       return
     fi
-    if can_sudo && confirm "Install Tailscale (needs root)?"; then curl -fsSL https://tailscale.com/install.sh | as_root sh >/dev/null 2>&1; fi
+    if can_sudo && confirm "Install Tailscale (needs root)?"; then curl -fsSL https://tailscale.com/install.sh | as_root sh </dev/null >/dev/null 2>&1; fi
     if ! find_ts; then ask tailscale "Ask the human to paste this into a terminal (it asks for their password once): curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up --operator=\$USER"; return; fi
   fi
   local state dns url; read -r state dns url <<< "$(ts_state)"
