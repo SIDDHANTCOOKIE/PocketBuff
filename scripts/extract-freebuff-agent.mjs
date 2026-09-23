@@ -1,5 +1,6 @@
 // Regenerates freebuff-agent.json from a codebuff monorepo checkout (Apache-2.0, https://github.com/CodebuffAI/codebuff).
 // Usage: node scripts/extract-freebuff-agent.mjs /path/to/codebuff
+// The codebuff checkout needs its dependencies installed (or NODE_PATH pointing at lodash and zod) for the bundle step.
 // Free mode only admits the CLI's own root agent, and checks that its system prompt opens with the canonical
 // Freebuff text, so we ship that definition verbatim instead of writing our own.
 import { execFileSync } from 'node:child_process'

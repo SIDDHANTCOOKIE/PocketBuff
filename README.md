@@ -118,3 +118,18 @@ Codebuff/Freebuff backend + local SDK tools
 - session create/select/delete protocol; the server allows runs in different sessions at the same time, but Freebuff free mode gives one active slot per account, so with the real runtime a second concurrent run may wait or be refused by the backend
 
 The automated environment used for this spike does not have a Tailscale daemon, so the Serve command itself is documented and structurally compatible but must be run and verified on the user's dev machine.
+
+## Freebuff free mode
+
+The companion runs on your existing Freebuff login (`~/.config/manicode/credentials.json`) with no paid key. Free mode has three requirements, and the companion handles all of them:
+
+- **Agent and model.** Free mode only admits the CLI's own root agent (`base2-free`) on an allowlisted model. `freebuff-agent.json` is that definition copied verbatim from the codebuff repo (Apache-2.0). Regenerate it with `node scripts/extract-freebuff-agent.mjs /path/to/codebuff`.
+- **Session slot.** Before the first run, the companion claims a slot (`POST /api/v1/freebuff/session/admission`). It saves the slot in `~/.config/freebuff-remote/slot.json` and releases it when the server stops.
+- **Instance id on every call.** `@codebuff/sdk` 0.10.7 can't send `freebuff_instance_id`, so `npm install` runs `scripts/patch-sdk.mjs` to add it. The server refuses to start with an unpatched SDK.
+
+Settings:
+
+- `FREEBUFF_MODEL` (default `mimo/mimo-v2.5`). Supported values: `mimo/mimo-v2.5`, `z-ai/glm-5.3-flash`, `upstage/solar-pro4`, `crof/kimi-k3-eco`, `deepseek/deepseek-v4-flash`, `deepseek/deepseek-v4-pro`, `openai/gpt-5.6-luna`.
+- `FREEBUFF_ALLOW_FREEBUCKS=1` lets the companion claim a model that costs Freebucks. By default it only claims zero-cost models and tells you which ones are available.
+
+Freebuff gives one slot per account. While the companion holds it, your desktop `freebuff` CLI can't run at the same time, and vice versa.
