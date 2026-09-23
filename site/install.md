@@ -18,7 +18,7 @@ Pocketbuff runs locally and is reached only over the human's own Tailscale netwo
 uname -s
 ```
 
-Expected: `Darwin` (macOS) or `Linux`. Anything else (for example Windows): stop and tell the human: "Pocketbuff's installer supports macOS and Linux for now. Windows support is coming."
+Expected: `Darwin` (macOS) or `Linux`: keep following this file with `install.sh`. On Windows (`$env:OS` is `Windows_NT`, you are in PowerShell): skip to the **Windows** section below and use `install.ps1`. Everything else about the flow is identical: the same STEP lines, the same exit codes, the same re-run-the-same-command rule.
 
 ## 2. Run the installer
 
@@ -55,6 +55,47 @@ What each step does, in order:
 | `tailscale` | Checks Tailscale is installed and signed in, and starts the sign-in if not | `OK signed in as <machine>.<tailnet>.ts.net` |
 | `serve` | Publishes Pocketbuff on the tailnet over HTTPS (`tailscale serve`) | `OK https://<machine>.<tailnet>.ts.net/` |
 | `pair` | Creates a one-time 6-digit code for the phone | `OK code 123456, valid for 10 minutes` |
+
+## Windows: install.ps1 instead of install.sh
+
+**Validation status (be honest with the human if they ask):** install.ps1 was verified by running it under PowerShell 7 on Linux. Proven there: argument handling, STEP output, exit codes, token/config/port logic, the Node download + checksum path, the app build, the background service and health check, pairing-code generation, an idempotent second run, and uninstall. Not yet run on a real Windows machine: installing Node and Tailscale with winget, the scheduled task, Tailscale for Windows itself, and the config-file permission lockdown. Treat the first real Windows run as the test. If the same Windows step FAILs twice, stop, tell the human the FAIL line, and say the Windows installer has not been proven on real hardware yet.
+
+Run this from the project folder the human wants to use from their phone:
+
+```powershell
+irm BASE/install.ps1 -OutFile "$env:TEMP\pocketbuff-install.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\pocketbuff-install.ps1" --yes --project (Get-Location).Path
+```
+
+If BASE can't be reached, use the copy on GitHub:
+
+```powershell
+irm https://raw.githubusercontent.com/SIDDHANTCOOKIE/freebuff-remote-control/main/site/install.ps1 -OutFile "$env:TEMP\pocketbuff-install.ps1"
+```
+
+Windows differences from the step table in section 2:
+
+| Step | Windows behavior |
+|---|---|
+| `platform` | Expects Windows 10+ on x64 or ARM64; service manager is a scheduled task |
+| `node` | Uses Node 20+ if present, else `winget install OpenJS.NodeJS.LTS`, else downloads a private copy into `~\.pocketbuff\node` (no admin) |
+| `service` | Registers a scheduled task named "Pocketbuff" (runs at logon as the current user, restarts on failure) instead of launchd/systemd |
+| `config` | The token file is locked to the current Windows user - the 0600 equivalent |
+| `tailscale` | Installs with `winget install tailscale.tailscale` if missing. Windows may show one administrator (UAC) prompt; approving it is the HUMAN part |
+
+Windows-only HUMAN wordings:
+
+- **winget / UAC**: "Windows is asking for administrator approval to install Node.js (or Tailscale). Please click Yes."
+- **tailscale, no winget**: "Please install Tailscale from https://tailscale.com/download/windows, open it, and sign in. Tell me when it's done."
+- Everything else (Tailscale sign-in link, the one-click HTTPS approval, Freebuff login) matches section 3 word for word.
+
+Doctor, pair and uninstall on Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.pocketbuff\install.ps1" doctor
+```
+
+(same file with `pair` or `uninstall`)
 
 ## 3. Handle HUMAN steps
 
@@ -113,3 +154,5 @@ Send the human one message with these parts (fill in the real values, keep it sh
 | Update to the latest version | run the install command from step 2 again |
 | Remove Pocketbuff | `bash ~/.pocketbuff/install.sh uninstall` (leaves Node, Tailscale and Freebuff installed) |
 | Logs | `~/.pocketbuff/logs/pocketbuff.log` |
+
+On Windows, run the same commands as `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.pocketbuff\install.ps1" <command>`.
