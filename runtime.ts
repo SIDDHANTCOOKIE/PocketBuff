@@ -40,7 +40,10 @@ export class CodebuffRuntime implements ChatRuntime {
       overrideTools: {
         run_terminal_command: async (input) => {
           if (!await guarded('run_terminal_command', input)) return [{ type: 'json', value: { errorMessage: 'Denied by remote user.' } }]
-          return ToolHelpers.runTerminalCommand({ ...input, cwd: path.resolve(this.projectDir, input.cwd ?? '.'), signal: handlers.signal })
+          const root = path.resolve(this.projectDir)
+          const cwd = path.resolve(root, input.cwd ?? '.')
+          if (cwd !== root && !cwd.startsWith(root + path.sep)) return [{ type: 'json', value: { errorMessage: 'Terminal cwd must stay inside the project.' } }]
+          return ToolHelpers.runTerminalCommand({ ...input, cwd, signal: handlers.signal })
         },
         write_file: async (input) => {
           if (!await guarded('write_file', input)) return [{ type: 'json', value: { errorMessage: 'Denied by remote user.' } }]

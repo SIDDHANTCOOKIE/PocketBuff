@@ -108,3 +108,13 @@ Codebuff/Freebuff backend + local SDK tools
 - Bind to `127.0.0.1` by default. Use Tailscale Serve for phone access.
 - Always set a long random `FREEBUFF_REMOTE_TOKEN` before remote use.
 - The shared token is an M1 bridge, not the final identity/session design.
+
+## M3/M4 status
+
+- installable PWA manifest, icon, service worker, offline shell fallback
+- touch-first mobile layout, Enter-to-send, auto-scroll, horizontal session switcher
+- Tailscale path remains localhost-only: `tailscale serve --bg http://127.0.0.1:8787`; validate with `tailscale serve status` and open its HTTPS URL on the phone
+- persisted multi-session registry with one independent runtime/checkpoint/approval/cancel context per project
+- session create/select/delete protocol; concurrent runs are allowed across different sessions
+
+The automated environment used for this spike does not have a Tailscale daemon, so the Serve command itself is documented and structurally compatible but must be run and verified on the user's dev machine.
