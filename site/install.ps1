@@ -6,6 +6,8 @@
 # Commands:  install (default) | doctor | pair | uninstall
 # Flags:     --yes            never ask; install what is missing
 #            --project DIR    folder the phone starts in (default: current folder)
+#            -Local | -Tailscale  access mode (saved for later commands)
+#            -BindHost IP     local mode: private LAN IPv4, else localhost
 #            --port N         local port (default 8787, next free one if taken)
 # Output:    one line per step, "STEP <name> OK|FAIL|HUMAN <detail>", then a summary block.
 # Exit:      0 done, 1 failed, 10 waiting on the human (do the HUMAN step, then run the same command again).
@@ -25,6 +27,9 @@ param(
   [switch]$Uninstall,
   [string]$Project,
   [int]$Port = 0,
+  [switch]$Local,
+  [switch]$Tailscale,
+  [string]$BindHost,
   [Alias('h')] [switch]$Help
 )
 
@@ -189,15 +194,30 @@ function Step-App {
   Step-OK app "installed $(if ($want) { $want.Substring(0,7) + ' ' })at $App"
 }
 
+function Get-Mode {
+  if ($Local -and $Tailscale) { throw 'Choose -Local or -Tailscale, not both' }
+  if ($Local) { return 'local' }
+  if ($Tailscale) { return 'tailscale' }
+  $saved = Conf-Get 'POCKETBUFF_MODE'
+  if ($saved -and $saved -notin @('local','tailscale')) { throw 'Invalid saved access mode' }
+  if ($saved) { return $saved }; return 'tailscale'
+}
+function Get-BindHost {
+  if ((Get-Mode) -ne 'local') { return '127.0.0.1' }
+  $h = if ($BindHost) { $BindHost } elseif (Conf-Get 'HOST') { Conf-Get 'HOST' } else { '127.0.0.1' }
+  if ($h -notmatch '^(127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2[0-9]|3[01])\.\d+\.\d+)$' -or @($h.Split('.') | Where-Object { [int]$_ -gt 255 }).Count -gt 0) { throw '-BindHost must be localhost or a private LAN IPv4 address' }
+  return $h
+}
+
 # ---------- config ----------
 function Test-PortFree ([int]$p) {
   try {
-    $l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse('127.0.0.1'), $p)
+    $l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse((Get-BindHost)), $p)
     $l.Start(); $l.Stop(); return $true
   } catch { return $false }
 }
 function Test-IsOurs ([int]$p) {
-  try { return ((Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri "http://127.0.0.1:$p/healthz").Content -match '"runtime"') } catch { return $false }
+  try { return ((Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri "http://$(Get-BindHost):$p/healthz").Content -match '"runtime"') } catch { return $false }
 }
 function Set-ConfigAcl ([string]$path) {
   if ($script:Platform -ne 'windows') { return }   # POSIX: the script runs as the user in their own profile dir
@@ -225,7 +245,7 @@ function Step-Config {
     $tries = 0
     while (-not (Test-IsOurs $p) -and -not (Test-PortFree $p)) { $p += 1; $tries += 1; if ($tries -ge 20) { Step-Fail config 'no free port from 8787 up'; return } }
   }
-  Set-Content $Config "FREEBUFF_REMOTE_TOKEN=$token`nHOST=127.0.0.1`nPORT=$p`nFREEBUFF_PROJECT_DIR=$dir`n" -NoNewline -Encoding ascii
+  Set-Content $Config "FREEBUFF_REMOTE_TOKEN=$token`nHOST=$(Get-BindHost)`nPORT=$p`nFREEBUFF_PROJECT_DIR=$dir`nPOCKETBUFF_MODE=$(Get-Mode)`n" -NoNewline -Encoding ascii
   Set-ConfigAcl $Config
   $runPs1 = Join-Path $HomeDir 'run.ps1'
   Set-Content $runPs1 @"
@@ -241,7 +261,7 @@ Set-Location '$App'
 function Get-ServiceKind { if ($script:Platform -eq 'windows') { 'scheduled-task' } else { 'background' } }
 function Test-Healthy {
   $p = Conf-Get 'PORT'; if (-not $p) { return $false }
-  try { return ((Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri "http://127.0.0.1:$p/healthz").Content -match '"ok":true') } catch { return $false }
+  try { return ((Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri "http://$(Get-BindHost):$p/healthz").Content -match '"ok":true') } catch { return $false }
 }
 function Stop-ProcessTree ([int]$rootId) {
   $byParent = @{}
@@ -290,7 +310,7 @@ function Step-Service {
   for ($i = 0; $i -lt 30; $i++) { if (Test-Healthy) { $up = $true; break }; Start-Sleep 1 }
   if ($up) {
     $note = if ($kind -eq 'background') { ' (no service manager in this environment: runs until reboot; re-run install after a restart)' } else { '' }
-    Step-OK service "$kind, http://127.0.0.1:$(Conf-Get 'PORT')/healthz ok$note"
+    Step-OK service "$kind, http://$(Get-BindHost):$(Conf-Get 'PORT')/healthz ok$note"
   } else {
     $tail = (Get-Content (Join-Path $Logs 'pocketbuff.log') -Tail 3 -ErrorAction SilentlyContinue) -join ' '
     Step-Fail service "$kind did not come up, last log lines: $tail"
@@ -346,13 +366,13 @@ function Step-Serve {
   $p = Conf-Get 'PORT'
   if ($state -ne 'Running') { return }
   $status = (& $script:Ts serve status 2>$null | Out-String)
-  if ($status -match "127\.0\.0\.1:$p") { Step-OK serve "https://$dns/"; return }
+  if ($status -match "127\.0\.0\.1:${p}([^0-9]|$)") { Step-OK serve "https://$dns/"; return }
   $out = Join-Path $HomeDir 'serve.out'
   Invoke-WithTimeout 10 $script:Ts @('serve', '--bg', '--https=443', "http://127.0.0.1:$p") $out
   $outText = Get-Content $out -Raw -ErrorAction SilentlyContinue; Remove-Item $out -ErrorAction SilentlyContinue
   if (-not $outText) { $outText = '' }
   $status = (& $script:Ts serve status 2>$null | Out-String)
-  if ($status -match "127\.0\.0\.1:$p") { Step-OK serve "https://$dns/"; return }
+  if ($status -match "127\.0\.0\.1:${p}([^0-9]|$)") { Step-OK serve "https://$dns/"; return }
   $m = [regex]::Match($outText, 'https://login\.tailscale\.com/[^ ]+')
   if ($m.Success) { Step-Ask serve "Ask the human to open $($m.Value) and turn on HTTPS for their tailnet (one click)." }
   elseif ($outText -match 'access denied|permission') { Step-Ask serve 'Ask the human to run the same command again from an Administrator PowerShell window.' }
@@ -370,15 +390,19 @@ function Get-PairCode {
   if ($m) { return ($m -replace '^CODE ', '') } else { return $null }
 }
 function Write-Summary {
-  $state, $dns, $url = Get-TsState
+  if ((Get-Mode) -eq 'local') { $url = "http://$(Get-BindHost):$(Conf-Get 'PORT')/" }
+  else { $state, $dns, $ignored = Get-TsState; $url = "https://$dns/" }
   $code = Get-PairCode
   if (-not $code) { Step-Fail pair 'could not create a pairing code'; return }
   Step-OK pair "code $code, valid for 10 minutes, single use"
   Write-Output 'DONE'
-  Write-Output "PHONE_URL https://$dns/"
-  Write-Output "PAIR_URL https://$dns/#pair=$code"
+  Write-Output "PHONE_URL $url"
+  Write-Output "PAIR_URL ${url}#pair=$code"
   Write-Output "PAIR_CODE $code"
-  Write-Output 'NOTE The phone needs the Tailscale app, signed in to the same account.'
+  if ((Get-Mode) -eq 'local') {
+    Write-Output 'NOTE Local HTTP is unencrypted: use only a trusted private network. No port forwarding. PWA installation requires HTTPS.'
+    if ((Get-BindHost) -eq '127.0.0.1') { Write-Output 'NOTE This link works on this computer only, not on a phone.' }
+  } else { Write-Output 'NOTE The phone needs the Tailscale app, signed in to the same account.' }
   Write-Output 'NOTE Free mode has one slot: the phone and the terminal take turns.'
   Write-Output "NOTE New code any time: powershell -File $(Join-Path $HomeDir 'install.ps1') pair"
 }
@@ -398,8 +422,17 @@ function Invoke-Install {
   Step-Config;   if ($script:failed -eq 1) { Finish }
   Step-Service;  if ($script:failed -eq 1) { Finish }
   Step-Freebuff
-  Step-Tailscale
-  if ($script:human -eq 0 -and $script:failed -eq 0) { Step-Serve }
+  if ((Get-Mode) -eq 'tailscale') {
+    Step-Tailscale
+    if ($script:human -eq 0 -and $script:failed -eq 0) { Step-Serve }
+  } else {
+    $p = Conf-Get 'PORT'
+    if ((Find-Ts) -and ((& $script:Ts serve status 2>$null | Out-String) -match "127\.0\.0\.1:${p}([^0-9]|$)")) {
+      & $script:Ts serve --https=443 off *> $null
+      if ($LASTEXITCODE -ne 0) { Step-Fail network 'could not remove the old Pocketbuff Serve mapping; local-only is not ready' }
+    }
+    Step-OK network "local only at http://$(Get-BindHost):$p/"
+  }
   if ($script:human -eq 0 -and $script:failed -eq 0) { Write-Summary }
   Finish
 }
@@ -412,28 +445,33 @@ function Invoke-Doctor {
     Step-OK app "$App$(if ($Source) { ' (local)' }) $(if ($r) { $r.Substring(0,7) })"
   } else { Step-Fail app 'not installed. Fix: run install' }
   if (Test-Path $Config) { Step-OK config "port $(Conf-Get 'PORT'), project $(Conf-Get 'FREEBUFF_PROJECT_DIR')" } else { Step-Fail config 'missing. Fix: run install' }
-  if ((Test-Path $Config) -and (Test-Healthy)) { Step-OK service "$(Get-ServiceKind) running" } else { Step-Fail service "not answering on 127.0.0.1:$(Conf-Get 'PORT'). Fix: run install; log: $(Join-Path $Logs 'pocketbuff.log')" }
+  if ((Test-Path $Config) -and (Test-Healthy)) { Step-OK service "$(Get-ServiceKind) running" } else { Step-Fail service "not answering on $(Get-BindHost):$(Conf-Get 'PORT'). Fix: run install; log: $(Join-Path $Logs 'pocketbuff.log')" }
   Step-Freebuff
-  if (Find-Ts) {
+  if ((Get-Mode) -eq 'local') {
+    $p = Conf-Get 'PORT'
+    if ((Find-Ts) -and ((& $script:Ts serve status 2>$null | Out-String) -match "127\.0\.0\.1:${p}([^0-9]|$)")) { Step-Fail network 'old Pocketbuff Serve mapping is still active. Fix: run install -Local' }
+    else { Step-OK network "local only at http://$(Get-BindHost):$p/" }
+  }
+  elseif (Find-Ts) {
     $state, $dns, $url = Get-TsState
     if ($state -eq 'Running') {
       Step-OK tailscale "signed in as $dns"
       $p = Conf-Get 'PORT'
       $status = (& $script:Ts serve status 2>$null | Out-String)
-      if ($status -match "127\.0\.0\.1:$p") { Step-OK serve "https://$dns/" } else { Step-Fail serve 'not serving the app. Fix: run install' }
+      if ($status -match "127\.0\.0\.1:${p}([^0-9]|$)") { Step-OK serve "https://$dns/" } else { Step-Fail serve 'not serving the app. Fix: run install' }
     } else { Step-Fail tailscale "state $state. Fix: run install" }
   } else { Step-Fail tailscale 'not installed. Fix: run install' }
   if ($script:failed -eq 0 -and $script:human -eq 0) { Write-Output 'HEALTHY' }
   Finish
 }
 function Invoke-Pair {
-  if ((Find-Node) -and (Find-Ts) -and (Test-Path $Config)) { Write-Summary; Finish }
+  if ((Find-Node) -and ((Get-Mode) -eq 'local' -or (Find-Ts)) -and (Test-Path $Config)) { Write-Summary; Finish }
   else { Write-Output 'STEP pair FAIL Pocketbuff is not installed yet; run install first'; exit 1 }
 }
 function Invoke-Uninstall {
   Stop-PocketbuffService; Step-OK service 'stopped and removed'
   $p = Conf-Get 'PORT'
-  if ((Find-Ts) -and $p -and ((& $script:Ts serve status 2>$null | Out-String) -match "127\.0\.0\.1:$p")) {
+  if ((Find-Ts) -and $p -and ((& $script:Ts serve status 2>$null | Out-String) -match "127\.0\.0\.1:${p}([^0-9]|$)")) {
     & $script:Ts serve --https=443 off *> $null
     Step-OK serve 'tailscale serve for Pocketbuff turned off'
   } else { Step-OK serve 'nothing to turn off' }

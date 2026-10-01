@@ -6,6 +6,8 @@
 # Commands:  install (default) | doctor | pair | uninstall
 # Flags:     --yes            never ask; install what is missing
 #            --project DIR    folder the phone starts in (default: current folder)
+#            --local | --tailscale  access mode (saved for later commands)
+#            --host IP        local mode: private LAN IPv4, else localhost
 #            --port N         local port (default 8787, next free one if taken)
 # Output:    one line per step, "STEP <name> OK|FAIL|HUMAN <detail>", then a summary block.
 # Exit:      0 done, 1 failed, 10 waiting on the human (do the HUMAN step, then run the same command again).
@@ -22,13 +24,16 @@ NODE_MAJOR=22
 LABEL="dev.pocketbuff.agent"
 APP="$HOME_DIR/app"; CONFIG="$HOME_DIR/config.env"; LOGS="$HOME_DIR/logs"
 
-cmd=install; yes=0; project=""; port=""
+cmd=install; yes=0; project=""; port=""; mode=""; local_host=""
 while [ $# -gt 0 ]; do
   case "$1" in
     install|doctor|pair|uninstall) cmd="$1" ;;
     --uninstall) cmd=uninstall ;;
     --yes|-y) yes=1 ;;
     --project) project="${2:-}"; shift ;;
+    --local) [ "$mode" != tailscale ] || { echo "Choose --local or --tailscale, not both"; exit 1; }; mode=local ;;
+    --tailscale) [ "$mode" != local ] || { echo "Choose --local or --tailscale, not both"; exit 1; }; mode=tailscale ;;
+    --host) local_host="${2:-}"; shift ;;
     --port) port="${2:-}"; shift ;;
     -h|--help) sed -n '2,13p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown argument: $1 (try --help)" >&2; exit 1 ;;
@@ -49,6 +54,20 @@ sha256() { if have sha256sum; then sha256sum "$1" | cut -d' ' -f1; else shasum -
 # timeout(1) is not on stock macOS: run in the background and kill it after N seconds.
 with_timeout() { local n="$1"; shift; "$@" & local pid=$!; ( sleep "$n"; kill "$pid" 2>/dev/null ) & local guard=$!; wait "$pid" 2>/dev/null; local rc=$?; kill "$guard" 2>/dev/null; return $rc; }
 conf_get() { [ -f "$CONFIG" ] && sed -n "s/^$1=//p" "$CONFIG" | tail -1; }
+
+# Old installs remain Tailscale unless the human explicitly selects local mode.
+mode="${mode:-$(conf_get POCKETBUFF_MODE)}"; mode="${mode:-tailscale}"
+case "$mode" in local|tailscale) ;; *) echo "STEP config FAIL invalid saved access mode"; exit 1 ;; esac
+local_host="${local_host:-$(conf_get HOST)}"; local_host="${local_host:-127.0.0.1}"
+case "$local_host" in
+  127.0.0.1|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) ;;
+  *) echo "STEP config FAIL --host must be localhost or a private LAN IPv4 address"; exit 1 ;;
+esac
+# Validate all four octets too, not just the private prefix.
+if ! printf '%s\n' "$local_host" | awk -F. 'NF != 4 {exit 1} {for(i=1;i<=4;i++) if($i !~ /^[0-9]+$/ || $i>255) exit 1}'; then
+  echo "STEP config FAIL invalid --host IPv4 address"; exit 1
+fi
+service_host() { if [ "$mode" = local ]; then echo "$local_host"; else echo 127.0.0.1; fi; }
 
 # ---------- platform ----------
 os="$(uname -s)"; arch="$(uname -m)"
@@ -102,8 +121,8 @@ step_app() {
 }
 
 # ---------- config ----------
-port_free() { "$node_bin" -e 'const s=require("net").createServer();s.once("error",()=>process.exit(1));s.listen(+process.argv[1],"127.0.0.1",()=>s.close(()=>process.exit(0)))' "$1"; }
-is_ours() { curl -fsS -m 2 "http://127.0.0.1:$1/healthz" 2>/dev/null | grep -q '"runtime"'; }
+port_free() { "$node_bin" -e 'const s=require("net").createServer();s.once("error",()=>process.exit(1));s.listen(+process.argv[1],process.argv[2],()=>s.close(()=>process.exit(0)))' "$1" "$(service_host)"; }
+is_ours() { curl -fsS -m 2 "http://$(service_host):$1/healthz" 2>/dev/null | grep -q '"runtime"'; }
 step_config() {
   mkdir -p "$HOME_DIR" "$LOGS"; chmod 700 "$HOME_DIR"
   local token dir p
@@ -117,7 +136,7 @@ step_config() {
     until is_ours "$p" || port_free "$p"; do p=$((p + 1)); tries=$((tries + 1)); [ $tries -lt 20 ] || { fail config "no free port from 8787 up"; return; }; done
   fi
   umask 077
-  printf 'FREEBUFF_REMOTE_TOKEN=%s\nHOST=127.0.0.1\nPORT=%s\nFREEBUFF_PROJECT_DIR=%s\n' "$token" "$p" "$dir" > "$CONFIG"
+  printf 'FREEBUFF_REMOTE_TOKEN=%s\nHOST=%s\nPORT=%s\nFREEBUFF_PROJECT_DIR=%s\nPOCKETBUFF_MODE=%s\n' "$token" "$(service_host)" "$p" "$dir" "$mode" > "$CONFIG"
   chmod 600 "$CONFIG"
   cat > "$HOME_DIR/run.sh" <<RUN
 #!/usr/bin/env bash
@@ -134,7 +153,7 @@ service_kind() {
   elif have systemctl && systemctl --user show-environment >/dev/null 2>&1; then echo systemd
   else echo background; fi
 }
-healthy() { curl -fsS -m 2 "http://127.0.0.1:$(conf_get PORT)/healthz" 2>/dev/null | grep -q '"ok":true'; }
+healthy() { curl -fsS -m 2 "http://$(service_host):$(conf_get PORT)/healthz" 2>/dev/null | grep -q '"ok":true'; }
 stop_service() {
   case "$(service_kind)" in
     launchd) launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null; rm -f "$HOME/Library/LaunchAgents/$LABEL.plist" ;;
@@ -187,7 +206,7 @@ UNIT
   for _ in $(seq 1 30); do healthy && break; sleep 1; done
   if healthy; then
     local note=""; [ "$kind" = background ] && note=" (no service manager found: runs until reboot; re-run install after a restart)"
-    ok service "$kind, http://127.0.0.1:$(conf_get PORT)/healthz ok$note"
+    ok service "$kind, http://$(service_host):$(conf_get PORT)/healthz ok$note"
   else fail service "$kind did not come up, last log lines: $(tail -3 "$LOGS/pocketbuff.log" 2>/dev/null | tr '\n' ' ')"; fi
 }
 
@@ -244,14 +263,20 @@ step_serve() {
 # ---------- pair ----------
 pair_code() { (set -a; . "$CONFIG"; set +a; cd "$APP" && "$node_bin" node_modules/tsx/dist/cli.mjs pair.ts) | sed -n 's/^CODE //p'; }
 summary() {
-  local state dns url code; read -r state dns url <<< "$(ts_state)"; code="$(pair_code)"
+  local state dns url code
+  if [ "$mode" = local ]; then url="http://$(service_host):$(conf_get PORT)/"
+  else read -r state dns url <<< "$(ts_state)"; url="https://$dns/"; fi
+  code="$(pair_code)"
   [ -n "$code" ] || { fail pair "could not create a pairing code"; return; }
   ok pair "code $code, valid for 10 minutes, single use"
   echo "DONE"
-  echo "PHONE_URL https://$dns/"
-  echo "PAIR_URL https://$dns/#pair=$code"
+  echo "PHONE_URL $url"
+  echo "PAIR_URL ${url}#pair=$code"
   echo "PAIR_CODE $code"
-  echo "NOTE The phone needs the Tailscale app, signed in to the same account."
+  if [ "$mode" = local ]; then
+    echo "NOTE Local HTTP is unencrypted: use only a trusted private network. No port forwarding. PWA installation requires HTTPS."
+    [ "$(service_host)" = 127.0.0.1 ] && echo "NOTE This link works on this computer only, not on a phone."
+  else echo "NOTE The phone needs the Tailscale app, signed in to the same account."; fi
   echo "NOTE Free mode has one slot: the phone and the terminal take turns."
   echo "NOTE New code any time: bash $HOME_DIR/install.sh pair"
 }
@@ -265,31 +290,42 @@ case "$cmd" in
     step_config; [ "$failed" = 1 ] && finish
     step_service; [ "$failed" = 1 ] && finish
     step_freebuff
-    step_tailscale
-    [ "$human" = 0 ] && [ "$failed" = 0 ] && step_serve
+    if [ "$mode" = tailscale ]; then
+      step_tailscale
+      [ "$human" = 0 ] && [ "$failed" = 0 ] && step_serve
+    else
+      # Remove only a Serve mapping for this companion, not another app.
+      if find_ts && "$ts" serve status 2>/dev/null | grep -Eq "127\.0\.0\.1:$(conf_get PORT)([^0-9]|$)"; then
+        "$ts" serve --https=443 off >/dev/null 2>&1 || fail network "could not remove the old Pocketbuff Serve mapping; local-only is not ready"
+      fi
+      ok network "local only at http://$(service_host):$(conf_get PORT)/"
+    fi
     [ "$human" = 0 ] && [ "$failed" = 0 ] && summary
     finish ;;
   pair)
-    find_node && find_ts && [ -f "$CONFIG" ] || { echo "STEP pair FAIL Pocketbuff is not installed yet; run install first"; exit 1; }
+    find_node && { [ "$mode" = local ] || find_ts; } && [ -f "$CONFIG" ] || { echo "STEP pair FAIL Pocketbuff is not installed yet; run install first"; exit 1; }
     summary; finish ;;
   doctor)
     ok platform "$os-$arch, service: $(service_kind)"
     if find_node; then ok node "$("$node_bin" -v)"; else fail node "Node >= 20 not found. Fix: run install"; fi
     if [ -f "$APP/dist/client/index.html" ]; then ok app "$APP${SOURCE:+ (local)} $(cut -c1-7 "$APP/.pocketbuff-ref" 2>/dev/null)"; else fail app "not installed. Fix: run install"; fi
     if [ -f "$CONFIG" ]; then ok config "port $(conf_get PORT), project $(conf_get FREEBUFF_PROJECT_DIR)"; else fail config "missing. Fix: run install"; fi
-    if [ -f "$CONFIG" ] && healthy; then ok service "$(service_kind) running"; else fail service "not answering on 127.0.0.1:$(conf_get PORT). Fix: run install; log: $LOGS/pocketbuff.log"; fi
+    if [ -f "$CONFIG" ] && healthy; then ok service "$(service_kind) running"; else fail service "not answering on $(service_host):$(conf_get PORT). Fix: run install; log: $LOGS/pocketbuff.log"; fi
     step_freebuff
-    if find_ts; then
+    if [ "$mode" = local ]; then
+      if find_ts && "$ts" serve status 2>/dev/null | grep -Eq "127\.0\.0\.1:$(conf_get PORT)([^0-9]|$)"; then fail network "old Pocketbuff Serve mapping is still active. Fix: run install --local"
+      else ok network "local only at http://$(service_host):$(conf_get PORT)/"; fi
+    elif find_ts; then
       read -r state dns url <<< "$(ts_state)"
       if [ "$state" = Running ]; then ok tailscale "signed in as $dns"
-        if "$ts" serve status 2>/dev/null | grep -q "127.0.0.1:$(conf_get PORT)"; then ok serve "https://$dns/"; else fail serve "not serving the app. Fix: run install"; fi
+        if "$ts" serve status 2>/dev/null | grep -Eq "127\.0\.0\.1:$(conf_get PORT)([^0-9]|$)"; then ok serve "https://$dns/"; else fail serve "not serving the app. Fix: run install"; fi
       else fail tailscale "state ${state:-unknown}. Fix: run install"; fi
     else fail tailscale "not installed. Fix: run install"; fi
     [ "$failed" = 0 ] && [ "$human" = 0 ] && echo "HEALTHY"
     finish ;;
   uninstall)
     stop_service; ok service "stopped and removed"
-    if find_ts && [ -f "$CONFIG" ] && "$ts" serve status 2>/dev/null | grep -q "127.0.0.1:$(conf_get PORT)"; then "$ts" serve --https=443 off >/dev/null 2>&1; ok serve "tailscale serve for Pocketbuff turned off"; else ok serve "nothing to turn off"; fi
+    if find_ts && [ -f "$CONFIG" ] && "$ts" serve status 2>/dev/null | grep -Eq "127\.0\.0\.1:$(conf_get PORT)([^0-9]|$)"; then "$ts" serve --https=443 off >/dev/null 2>&1; ok serve "tailscale serve for Pocketbuff turned off"; else ok serve "nothing to turn off"; fi
     rm -rf "$HOME_DIR" "$STATE_DIR"; ok files "removed $HOME_DIR and $STATE_DIR"
     echo "DONE Pocketbuff removed. Node, Tailscale and Freebuff were left installed."
     exit 0 ;;
