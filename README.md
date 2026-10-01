@@ -27,7 +27,7 @@ Paste this into Freebuff on the computer you want to control:
 Read https://<your-site>/install.md and follow it
 ```
 
-Freebuff does the setup. You sign in to Tailscale once, then open the link it gives you on your phone. Prefer a terminal?
+Freebuff asks whether you want Tailscale for access from anywhere or local-only access without it. Then open the link it gives you. Local HTTP works in your browser on trusted Wi-Fi; phone PWA installation requires HTTPS. Prefer a terminal?
 
 ```sh
 curl -fsSL https://<your-site>/install.sh | bash -s -- --yes
@@ -142,7 +142,7 @@ Stop the CLI before continuing a chat on the phone, and stop the companion befor
 ## security
 
 - Freebuff's own login token stays on the computer. The phone gets only Pocketbuff's access token, handed out at pairing.
-- The server binds to `127.0.0.1`; Tailscale Serve is the only way in.
+- By default the server binds to `127.0.0.1`; Tailscale mode uses Serve for private HTTPS. Local-only setup can bind an explicit private LAN IPv4 for same-network browser access. Local HTTP is unencrypted: use trusted Wi-Fi, never forward ports.
 - Pairing codes are single use, expire after 10 minutes, allow 5 tries, and are stored hashed.
 - Approvals gate file writes and commands; anything left open when a run stops is denied.
 
