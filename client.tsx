@@ -7,6 +7,7 @@ import '@fontsource/instrument-serif/400-italic.css'
 import type { ServerMessage, SessionSummary } from './protocol'
 import type { CliChatSummary } from './cliChats'
 import './style.css'
+import { InstallPrompt } from './InstallPrompt'
 
 type CardKind = 'tool' | 'diff' | 'approval'
 type Item = { key: string; sessionId: string; kind: 'user' | 'assistant' | 'system' | 'card'; text: string; card?: CardKind; title?: string; subtitle?: string; status?: string; requestId?: string; detail?: string }
@@ -117,7 +118,8 @@ function Pair({ onToken }: { onToken: (token: string) => void }) {
 
 function Root() {
   const [token, setToken] = useState(() => new URLSearchParams(location.hash.slice(1)).get('token') || localStorage.getItem('freebuff-token') || '')
-  return token ? <App token={token}/> : <Pair onToken={setToken}/>
+  useEffect(() => { if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {}) }, [])
+  return <>{token ? <App token={token}/> : <Pair onToken={setToken}/>}<InstallPrompt/></>
 }
 
 function App({ token }: { token: string }) {
@@ -129,7 +131,6 @@ function App({ token }: { token: string }) {
 
   useEffect(() => {
     if (token) { localStorage.setItem('freebuff-token', token); if (location.hash) history.replaceState(null, '', location.pathname + location.search) }
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {})
     let closed = false, retry = 0, timer: ReturnType<typeof setTimeout> | undefined, seq = 0
     const add = (item: Omit<Item, 'key'>) => setItems(v => [...v, { ...item, key: `i${seq++}` }])
     // Replace a card in place so its position in the timeline stays where it first appeared.
