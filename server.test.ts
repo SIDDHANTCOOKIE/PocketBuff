@@ -147,6 +147,13 @@ describe('companion server', () => {
     expect(manifest.headers.get('content-type')).toContain('manifest')
     expect((await manifest.json()).display).toBe('standalone')
     expect(worker.headers.get('content-type')).toContain('javascript')
+    for (const asset of ['icon-192.png', 'icon-512.png', 'icon-maskable-192.png', 'icon-maskable-512.png', 'apple-touch-icon.png']) {
+      const response = await fetch(`http://127.0.0.1:${port}/${asset}`)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe('image/png')
+    }
+    const favicon = await fetch(`http://127.0.0.1:${port}/favicon.ico`)
+    expect(favicon.headers.get('content-type')).toBe('image/x-icon')
   })
 
   it('serves built CSS with a browser-accepted MIME type', async () => {

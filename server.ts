@@ -90,7 +90,7 @@ export function createCompanionServer(options: ServerOptions = {}) {
     const requestPath = pathname === '/' ? 'index.html' : pathname.replace(/^\//, '')
     const resolved = path.resolve(staticDir, requestPath)
     if ((resolved !== path.resolve(staticDir) && !resolved.startsWith(path.resolve(staticDir) + path.sep)) || !fs.existsSync(resolved)) { res.writeHead(404); res.end('Not found'); return }
-    const mime = resolved.endsWith('.html') ? 'text/html; charset=utf-8' : resolved.endsWith('.js') ? 'text/javascript; charset=utf-8' : resolved.endsWith('.css') ? 'text/css; charset=utf-8' : resolved.endsWith('.svg') ? 'image/svg+xml' : resolved.endsWith('.webmanifest') ? 'application/manifest+json' : 'application/octet-stream'
+    const mime = resolved.endsWith('.html') ? 'text/html; charset=utf-8' : resolved.endsWith('.js') ? 'text/javascript; charset=utf-8' : resolved.endsWith('.css') ? 'text/css; charset=utf-8' : resolved.endsWith('.png') ? 'image/png' : resolved.endsWith('.ico') ? 'image/x-icon' : resolved.endsWith('.svg') ? 'image/svg+xml' : resolved.endsWith('.webmanifest') ? 'application/manifest+json' : 'application/octet-stream'
     res.writeHead(200, { 'content-type': mime }); fs.createReadStream(resolved).pipe(res)
   })
 

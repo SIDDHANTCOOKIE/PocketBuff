@@ -202,3 +202,15 @@ code.tool { color: var(--text); flex: none; }
 .pair-body .hint { margin-top: var(--s2); font-size: 12px; line-height: 16px; color: var(--faint); }
 .pair-body .hint.error { color: var(--bad); }
 .pair-body .hint code { color: var(--muted); overflow-wrap: anywhere; }
+
+/* Only shown when the browser offers installation, or as instructions in iOS Safari. */
+.install-prompt { position: fixed; z-index: 20; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(688px, calc(100% - 32px)); display: flex; align-items: center; gap: 12px; padding: 16px; border-radius: 12px; background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-strong), 0 8px 32px rgba(0,0,0,.32); }
+.install-prompt img { flex: none; }
+.install-copy { flex: 1; min-width: 0; }
+.install-copy strong { font-weight: 500; }
+.install-copy p { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 16px; }
+.install-action { flex: none; min-height: 40px; padding: 8px 12px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 12px; font-weight: 500; }
+.install-action:disabled { opacity: .6; }
+.install-dismiss { flex: none; width: 32px; height: 40px; border-radius: 8px; color: var(--muted); font-size: 24px; }
+.install-dismiss:hover { background: var(--hover); }
+@media (max-width: 480px) { .install-prompt { flex-wrap: wrap; } .install-copy { flex-basis: calc(100% - 96px); } .install-action { margin-left: 52px; order: 4; } }
