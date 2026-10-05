@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { installHint } from './installHint'
 
 type InstallEvent = Event & {
   prompt: () => Promise<void>
@@ -7,12 +8,12 @@ type InstallEvent = Event & {
 const dismissalKey = 'pocketbuff-install-dismissed'
 const standalone = () => window.matchMedia('(display-mode: standalone)').matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone)
 const dismissed = () => { try { return localStorage.getItem(dismissalKey) === 'yes' } catch { return false } }
-const iosSafari = () => (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) && /Safari/.test(navigator.userAgent) && !/CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo/.test(navigator.userAgent)
 
 export function InstallPrompt() {
   const [event, setEvent] = useState<InstallEvent | null>(null)
   const [hidden, setHidden] = useState(() => standalone() || dismissed())
-  const [ios] = useState(iosSafari)
+  const [waited, setWaited] = useState(false)
+  useEffect(() => { const t = window.setTimeout(() => setWaited(true), 8000); return () => window.clearTimeout(t) }, [])
   const [busy, setBusy] = useState(false)
   useEffect(() => {
     const installed = () => { setEvent(null); setHidden(true) }
@@ -41,11 +42,15 @@ export function InstallPrompt() {
     } catch { /* The browser may withdraw install eligibility. Wait for a fresh event. */ }
     finally { setEvent(null); setBusy(false) }
   }
-  if (hidden || (!event && !ios)) return null
+  const hint = hidden ? null : installHint({
+    userAgent: navigator.userAgent, platform: navigator.platform, maxTouchPoints: navigator.maxTouchPoints,
+    secure: window.isSecureContext, standalone: standalone(), hasInstallEvent: Boolean(event), waited,
+  })
+  if (!hint) return null
   return <aside className="install-prompt" aria-label="Install Pocketbuff">
     <img src="/icon-48.png" width="40" height="40" alt=""/>
-    <div className="install-copy"><strong>Keep Pocketbuff close</strong><p>{ios ? 'Tap Share, then Add to Home Screen.' : 'Open it from your home screen.'}</p></div>
-    {event && <button className="install-action" disabled={busy} onClick={() => void install()}>{busy ? 'Opening...' : 'Install Pocketbuff'}</button>}
+    <div className="install-copy"><strong>Keep Pocketbuff close</strong><p>{hint.text}</p></div>
+    {event && hint.kind === 'install' && <button className="install-action" disabled={busy} onClick={() => void install()}>{busy ? 'Opening...' : 'Install Pocketbuff'}</button>}
     <button className="install-dismiss" onClick={dismiss} aria-label="Dismiss install prompt">×</button>
   </aside>
 }

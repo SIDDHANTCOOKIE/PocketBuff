@@ -3,7 +3,8 @@
 #
 #   curl -fsSL https://<site>/install.sh | bash -s -- --yes
 #
-# Commands:  install (default) | doctor | pair | uninstall
+# Commands:  install (default) | up | doctor | pair | uninstall
+#            (after install, `pocketbuff up|pair|doctor` does the same from any terminal)
 # Flags:     --yes            never ask; install what is missing
 #            --project DIR    folder the phone starts in (default: current folder)
 #            --local | --tailscale  access mode (saved for later commands)
@@ -27,7 +28,7 @@ APP="$HOME_DIR/app"; CONFIG="$HOME_DIR/config.env"; LOGS="$HOME_DIR/logs"
 cmd=install; yes=0; project=""; port=""; mode=""; local_host=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    install|doctor|pair|uninstall) cmd="$1" ;;
+    install|up|doctor|pair|uninstall) cmd="$1" ;;
     --uninstall) cmd=uninstall ;;
     --yes|-y) yes=1 ;;
     --project) project="${2:-}"; shift ;;
@@ -35,7 +36,7 @@ while [ $# -gt 0 ]; do
     --tailscale) [ "$mode" != local ] || { echo "Choose --local or --tailscale, not both"; exit 1; }; mode=tailscale ;;
     --host) local_host="${2:-}"; shift ;;
     --port) port="${2:-}"; shift ;;
-    -h|--help) sed -n '2,13p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown argument: $1 (try --help)" >&2; exit 1 ;;
   esac
   shift
@@ -278,7 +279,48 @@ summary() {
     [ "$(service_host)" = 127.0.0.1 ] && echo "NOTE This link works on this computer only, not on a phone."
   else echo "NOTE The phone needs the Tailscale app, signed in to the same account."; fi
   echo "NOTE Free mode has one slot: the phone and the terminal take turns."
-  echo "NOTE New code any time: bash $HOME_DIR/install.sh pair"
+  echo "NOTE New code any time: pocketbuff pair (or bash $HOME_DIR/install.sh pair)"
+}
+
+# ---------- command + Freebuff skill ----------
+# `pocketbuff` on PATH and a Freebuff skill (/skill:pocketbuff), so next time nothing needs pasting.
+AGENTS_DIR="${POCKETBUFF_AGENTS_DIR:-$HOME/.agents}"; BIN_LINK_DIR="${POCKETBUFF_BIN_DIR:-$HOME/.local/bin}"
+write_skill() {
+  local d="$AGENTS_DIR/skills/pocketbuff"; mkdir -p "$d" || return 1
+  cat > "$d/SKILL.md" <<'SKILL'
+---
+name: pocketbuff
+description: Start Pocketbuff so the user can continue this Freebuff session from their phone. Use when the user asks to start, open, pair or check Pocketbuff or phone access.
+---
+
+# Pocketbuff
+
+Pocketbuff is already installed on this computer. Do not reinstall it and do not re-read install.md.
+
+1. Run `pocketbuff up` in a terminal. On Windows it works in both CMD and PowerShell. If the command is not found, run `bash ~/.pocketbuff/install.sh up` (Windows: `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.pocketbuff\install.ps1" up`).
+2. Exit code 0: tell the user to open the `PAIR_URL` line on their phone. If it asks for a code, give them `PAIR_CODE` (single use, expires in 10 minutes). Repeat any `NOTE` lines in plain words.
+3. Exit code 10: a `STEP ... HUMAN` line says what the user must do. Tell them exactly that, wait, then run `pocketbuff up` again.
+4. Exit code 1: show the `STEP ... FAIL` line and run `pocketbuff doctor`. Do not retry the same failing step more than once.
+5. Never print or paste `~/.pocketbuff/config.env` or any token. Never use sudo, change firewall settings or Tailscale accounts.
+6. Free mode has one slot, so the phone and this terminal take turns.
+
+Other commands: `pocketbuff pair` (new code), `pocketbuff doctor` (health check).
+SKILL
+}
+step_command() {
+  mkdir -p "$HOME_DIR/bin" || { fail command "could not create $HOME_DIR/bin"; return; }
+  cat > "$HOME_DIR/bin/pocketbuff" <<SHIM
+#!/usr/bin/env bash
+# Pocketbuff command: pocketbuff [up|pair|doctor|uninstall]  (default: up)
+exec bash "$HOME_DIR/install.sh" "\${@:-up}"
+SHIM
+  chmod +x "$HOME_DIR/bin/pocketbuff"
+  mkdir -p "$BIN_LINK_DIR" && ln -sf "$HOME_DIR/bin/pocketbuff" "$BIN_LINK_DIR/pocketbuff" || { fail command "could not link pocketbuff into $BIN_LINK_DIR"; return; }
+  write_skill || { fail command "could not write the Freebuff skill in $AGENTS_DIR"; return; }
+  case ":$PATH:" in
+    *":$BIN_LINK_DIR:"*) ok command "pocketbuff command ready, Freebuff skill: /skill:pocketbuff" ;;
+    *) ok command "pocketbuff linked in $BIN_LINK_DIR (not on PATH yet: add it, or run bash $HOME_DIR/bin/pocketbuff). Freebuff skill: /skill:pocketbuff" ;;
+  esac
 }
 
 # ---------- commands ----------
@@ -290,6 +332,7 @@ case "$cmd" in
     step_config; [ "$failed" = 1 ] && finish
     step_service; [ "$failed" = 1 ] && finish
     step_freebuff
+    step_command; [ "$failed" = 1 ] && finish
     if [ "$mode" = tailscale ]; then
       step_tailscale
       [ "$human" = 0 ] && [ "$failed" = 0 ] && step_serve
@@ -300,6 +343,12 @@ case "$cmd" in
       fi
       ok network "local only at http://$(service_host):$(conf_get PORT)/"
     fi
+    [ "$human" = 0 ] && [ "$failed" = 0 ] && summary
+    finish ;;
+  up)
+    find_node && { [ "$mode" = local ] || find_ts; } && [ -f "$CONFIG" ] || { echo "STEP up FAIL Pocketbuff is not installed yet; run install first"; exit 1; }
+    if healthy; then ok service "already running"; else step_service; fi
+    [ "$failed" = 0 ] && step_freebuff
     [ "$human" = 0 ] && [ "$failed" = 0 ] && summary
     finish ;;
   pair)
@@ -326,6 +375,8 @@ case "$cmd" in
   uninstall)
     stop_service; ok service "stopped and removed"
     if find_ts && [ -f "$CONFIG" ] && "$ts" serve status 2>/dev/null | grep -Eq "127\.0\.0\.1:$(conf_get PORT)([^0-9]|$)"; then "$ts" serve --https=443 off >/dev/null 2>&1; ok serve "tailscale serve for Pocketbuff turned off"; else ok serve "nothing to turn off"; fi
+    [ "$(readlink "$BIN_LINK_DIR/pocketbuff" 2>/dev/null)" = "$HOME_DIR/bin/pocketbuff" ] && rm -f "$BIN_LINK_DIR/pocketbuff"
+    rm -rf "$AGENTS_DIR/skills/pocketbuff"
     rm -rf "$HOME_DIR" "$STATE_DIR"; ok files "removed $HOME_DIR and $STATE_DIR"
     echo "DONE Pocketbuff removed. Node, Tailscale and Freebuff were left installed."
     exit 0 ;;

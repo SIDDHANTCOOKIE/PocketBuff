@@ -111,7 +111,7 @@ function Pair({ onToken }: { onToken: (token: string) => void }) {
       <p>Enter the 6-digit code from your computer.</p>
       <input className="code" value={code} onChange={e => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setState('idle') }} inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" aria-label="Pairing code" autoFocus/>
       <button className="primary" disabled={code.length !== 6 || state === 'busy'}>{state === 'busy' ? 'Pairing' : 'Pair'}</button>
-      <p className={`hint ${state === 'wrong' ? 'error' : ''}`}>{state === 'wrong' ? 'That code is wrong or expired. Ask your computer for a new one.' : <>No code? Run <code>bash ~/.pocketbuff/install.sh pair</code></>}</p>
+      <p className={`hint ${state === 'wrong' ? 'error' : ''}`}>{state === 'wrong' ? 'That code is wrong or expired. Ask your computer for a new one.' : <>No code? Run <code>pocketbuff pair</code></>}</p>
     </form>
   </main>
 }
