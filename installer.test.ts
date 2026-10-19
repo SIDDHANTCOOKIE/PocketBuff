@@ -138,3 +138,14 @@ describe('install guide mentions the command', () => {
     expect(prompt).toContain('/skill:pocketbuff')
   })
 })
+
+describe('install.ps1 on Windows PowerShell 5.1', () => {
+  // 5.1 drops double quotes inside arguments passed to native programs, so `node -p 'x.split(".")'` becomes a syntax error
+  // and the version check reads every Node as 0. Keep the probe free of double quotes.
+  it('passes node -p expressions without double quotes', () => {
+    const ps1 = fs.readFileSync('site/install.ps1', 'utf8')
+    const probes = [...ps1.matchAll(/&\s*\$\w+\s+-p\s+'([^']*)'/g)].map((m) => m[1])
+    expect(probes.length).toBeGreaterThan(0)
+    for (const probe of probes) expect(probe).not.toContain('"')
+  })
+})
