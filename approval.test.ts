@@ -14,3 +14,10 @@ describe('approval gate', () => {
     await expect(decision).resolves.toBe('approve')
   })
 })
+
+describe('sensitive path matching', () => {
+  it('matches Windows separators', () => {
+    expect(approvalReason('read_files', { filePaths: ['app\\.env.local'] })).toContain('sensitive')
+    expect(approvalReason('read_files', { filePaths: ['certs\\server.pem'] })).toContain('sensitive')
+  })
+})

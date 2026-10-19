@@ -17,7 +17,7 @@ export function approvalReason(toolName: string, input: Record<string, unknown>)
   if (SENSITIVE_TOOLS.has(toolName)) return `${toolName} can change the project or run a local command.`
   if (toolName === 'read_files') {
     const paths = Array.isArray(input.filePaths) ? input.filePaths : []
-    if (paths.some((value) => typeof value === 'string' && /(^|\/)\.env(\.|$)|\.pem$|\.key$/i.test(value))) return 'Reading a sensitive credential-like file needs approval.'
+    if (paths.some((value) => typeof value === 'string' && /(^|[\\/])\.env(\.|$)|\.pem$|\.key$/i.test(value))) return 'Reading a sensitive credential-like file needs approval.'
   }
   return null
 }
