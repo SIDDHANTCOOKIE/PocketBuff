@@ -21,6 +21,11 @@ const HISTORY_LIMIT = 2000
 
 function send(socket: WebSocket, value: ServerMessage) { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)) }
 const str = (value: unknown) => typeof value === 'string'
+/** Browsers always send Origin on a WebSocket handshake and let any page open one to localhost, so it must match the host that served us. */
+export function originAllowed(origin: string | undefined, host: string | undefined) {
+  if (origin === undefined) return true // not a browser (curl, scripts); the token still applies
+  try { return !!host && new URL(origin).host.toLowerCase() === host.toLowerCase() } catch { return false }
+}
 function isClientMessage(value: unknown): value is ClientMessage {
   if (!value || typeof value !== 'object') return false
   const m = value as Record<string, unknown>
@@ -51,6 +56,8 @@ export function createCompanionServer(options: ServerOptions = {}) {
   const staticDir = options.staticDir ?? path.resolve('dist/client')
   const stateDir = options.stateDir ?? process.env.FREEBUFF_REMOTE_STATE_DIR ?? path.join(os.homedir(), '.config', 'freebuff-remote')
   const mock = options.runtime?.name === 'mock' || process.env.FREEBUFF_REMOTE_MOCK === '1'
+  // The token is the only thing between the network and a shell on this machine, so never run the real agent without one.
+  if (!token && !mock) throw new Error('FREEBUFF_REMOTE_TOKEN is not set. Refusing to start without authentication (set a long random value, or use the installer).')
   const sessions = new SessionManager(path.join(stateDir, 'sessions.json'), (projectDir, id) => { if (options.runtime) return options.runtime; if (mock) return new MockRuntime(); return lazyCodebuffRuntime(projectDir, path.join(stateDir, 'sessions', `${id}.json`), stateDir) }, defaultProjectDir)
   // An explicitly configured project folder wins over whatever session was saved last, so a new FREEBUFF_PROJECT_DIR is not silently ignored.
   const explicitProject = options.projectDir || process.env.FREEBUFF_PROJECT_DIR ? sessions.ensure(defaultProjectDir).id : undefined
@@ -94,10 +101,10 @@ export function createCompanionServer(options: ServerOptions = {}) {
     res.writeHead(200, { 'content-type': mime }); fs.createReadStream(resolved).pipe(res)
   })
 
-  const wss = new WebSocketServer({ noServer: true })
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url || '/', 'http://localhost'); const supplied = url.searchParams.get('token') || ''
-    if (url.pathname !== '/ws' || (token && !safeEqual(supplied, token))) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return }
+    if (url.pathname !== '/ws' || !originAllowed(req.headers.origin, req.headers.host) || (token && !safeEqual(supplied, token))) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))
   })
 

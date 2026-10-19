@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import WebSocket from 'ws'
-import { createCompanionServer } from './server'
+import { createCompanionServer, originAllowed } from './server'
 import { MockRuntime } from './runtime'
 
 const apps: ReturnType<typeof createCompanionServer>[] = []
@@ -257,5 +257,37 @@ describe('remote-control continuity', () => {
     }))
     expect(seen.find((m) => m.type === 'approval-resolved')?.decision).toBe('deny')
     ws.close()
+  })
+})
+
+describe('websocket hardening', () => {
+  it('refuses to start the real agent without a token', () => {
+    const prior = process.env.FREEBUFF_REMOTE_TOKEN, mock = process.env.FREEBUFF_REMOTE_MOCK
+    delete process.env.FREEBUFF_REMOTE_TOKEN; delete process.env.FREEBUFF_REMOTE_MOCK
+    try { expect(() => createCompanionServer({ stateDir: fs.mkdtempSync(path.join(os.tmpdir(), 'fb-state-')) })).toThrow(/FREEBUFF_REMOTE_TOKEN/) }
+    finally { if (prior !== undefined) process.env.FREEBUFF_REMOTE_TOKEN = prior; if (mock !== undefined) process.env.FREEBUFF_REMOTE_MOCK = mock }
+  })
+
+  it('rejects a cross-origin browser handshake even with the right token, and allows same-origin', async () => {
+    const app = createCompanionServer({ runtime: new MockRuntime(), token: 'secret', stateDir: fs.mkdtempSync(path.join(os.tmpdir(), 'fb-state-')) })
+    apps.push(app)
+    const { port } = await app.listen(0)
+    const attempt = (origin?: string) => new Promise<number>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=secret`, origin ? { headers: { Origin: origin } } : undefined)
+      ws.on('open', () => { ws.close(); resolve(101) }); ws.on('error', reject)
+      ws.on('unexpected-response', (_req, res) => resolve(res.statusCode || 0))
+    })
+    expect(await attempt('https://evil.example')).toBe(401)
+    expect(await attempt(`http://localhost:${port}`)).toBe(401) // different host string than the one the request used
+    expect(await attempt(`http://127.0.0.1:${port}`)).toBe(101)
+    expect(await attempt()).toBe(101)
+  })
+
+  it('originAllowed compares origin host to request host', () => {
+    expect(originAllowed(undefined, 'a:1')).toBe(true)
+    expect(originAllowed('https://phone.ts.net', 'phone.ts.net')).toBe(true)
+    expect(originAllowed('https://evil.com', 'phone.ts.net')).toBe(false)
+    expect(originAllowed('null', 'phone.ts.net')).toBe(false)
+    expect(originAllowed('https://phone.ts.net', undefined)).toBe(false)
   })
 })

@@ -88,3 +88,45 @@ describe('validation before approval', () => {
     expect(asked).toBe(0)
   })
 })
+
+describe('approval shows the real change', () => {
+  it('passes a diff against the current file to the guard for full-file writes and patches', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fbr-'))
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'one\ntwo\n')
+    const seen: Array<Record<string, unknown>> = []
+    const overrides = createToolOverrides(dir, async (_tool, input) => { seen.push(input); return false })
+    await overrides.write_file({ type: 'file', path: 'a.txt', content: 'one\nTWO\n' })
+    await overrides.write_file({ type: 'patch', path: 'a.txt', content: hunkPatch('a.txt', 'one\ntwo\n', 'one\nthree\n') })
+    expect(seen[0].unifiedDiff).toMatch(/-two\n\+TWO/)
+    expect(seen[1].unifiedDiff).toMatch(/-two\n\+three/)
+    expect(fs.readFileSync(path.join(dir, 'a.txt'), 'utf8')).toBe('one\ntwo\n')
+  })
+
+  it('does not ask about a patch that cannot apply', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fbr-'))
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'unrelated\n')
+    let asked = 0
+    const overrides = createToolOverrides(dir, async () => { asked++; return true })
+    expect(JSON.stringify(await overrides.write_file({ type: 'patch', path: 'a.txt', content: hunkPatch('a.txt', 'one\ntwo\n', 'one\nTWO\n') }))).toContain('did not apply')
+    expect(asked).toBe(0)
+  })
+})
+
+describe('read_files gating', () => {
+  it('asks before reading credential-like files and withholds them when denied', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fbr-'))
+    fs.writeFileSync(path.join(dir, '.env'), 'SECRET=1'); fs.writeFileSync(path.join(dir, 'README.md'), 'hello')
+    const asked: string[] = []
+    const deny = createToolOverrides(dir, async (tool, input) => { asked.push(`${tool}:${(input.filePaths as string[]).join()}`); return false })
+    expect(await deny.read_files({ filePaths: ['README.md', '.env', 'sub\\.env.local'] })).toEqual({ 'README.md': 'hello', '.env': '[BLOCKED]', 'sub\\.env.local': '[BLOCKED]' })
+    expect(asked).toEqual(['read_files:.env', 'read_files:sub\\.env.local'])
+    const allow = createToolOverrides(dir, async () => true)
+    expect((await allow.read_files({ filePaths: ['.env'] }))['.env']).toBe('SECRET=1')
+  })
+
+  it('never reads outside the project and reports missing files', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fbr-'))
+    const overrides = createToolOverrides(dir, async () => true)
+    expect(await overrides.read_files({ filePaths: ['../x', 'nope.txt'] })).toEqual({ '../x': '[FILE_OUTSIDE_PROJECT]', 'nope.txt': '[FILE_DOES_NOT_EXIST]' })
+  })
+})
