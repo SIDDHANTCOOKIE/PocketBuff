@@ -108,7 +108,7 @@ function Find-Node {
   foreach ($n in $candidates) {
     if (-not $n -or -not (Test-Path $n)) { continue }
     $major = 0
-    try { $major = [int](& $n -p 'process.versions.node.split(".")[0]' 2>$null) } catch { continue }
+    try { $major = [int](& $n -p 'parseInt(process.versions.node)' 2>$null) } catch { continue }
     if ($major -ge 20) { $script:NodeBin = $n; return $true }
   }
   return $false
