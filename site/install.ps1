@@ -222,13 +222,10 @@ function Test-IsOurs ([int]$p) {
 }
 function Set-ConfigAcl ([string]$path) {
   if ($script:Platform -ne 'windows') { return }   # POSIX: the script runs as the user in their own profile dir
-  $acl = Get-Acl $path
-  $acl.SetAccessRuleProtection($true, $false)
-  foreach ($r in @($acl.Access)) { $acl.RemoveAccessRule($r) | Out-Null }
+  # icacls, not Get-Acl/Set-Acl: Set-Acl rewrites the whole descriptor and fails without SeSecurityPrivilege in a normal (non-elevated) shell.
   $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-  $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($me, 'FullControl', 'Allow')
-  $acl.AddAccessRule($rule)
-  Set-Acl $path $acl
+  & icacls.exe $path /inheritance:r /grant:r "${me}:(F)" | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "icacls could not restrict $path" }
 }
 function Step-Config {
   New-Item -ItemType Directory -Path $HomeDir, $Logs -Force | Out-Null

@@ -149,3 +149,11 @@ describe('install.ps1 on Windows PowerShell 5.1', () => {
     for (const probe of probes) expect(probe).not.toContain('"')
   })
 })
+
+describe('install.ps1 file permissions', () => {
+  it('locks config files with icacls, not Set-Acl (which needs SeSecurityPrivilege)', () => {
+    const ps1 = fs.readFileSync('site/install.ps1', 'utf8')
+    expect(ps1).toContain('icacls.exe')
+    expect(ps1).not.toMatch(/^\s*Set-Acl\b/m)
+  })
+})
