@@ -16,7 +16,9 @@ function run(flags: string[], code: string, config = '') {
   } finally { fs.rmSync(home, { recursive: true, force: true }) }
 }
 const stubPair = 'pair_code() { echo 123456; }; ts_state() { echo "Running laptop.tail1234.ts.net"; }; summary; finish'
-describe('installer access modes', () => {
+// install.sh rejects MINGW/Git Bash by design (Windows uses install.ps1), so these bash-driven tests run on macOS and Linux only.
+const posix = describe.skipIf(process.platform === 'win32')
+posix('installer access modes', () => {
   it('local pairing works without touching Tailscale', () => {
     const r = run(['--local'], 'ts_state() { echo "unexpected Tailscale call" >&2; exit 99; }; pair_code() { echo 123456; }; summary; finish', 'PORT=8787\n')
     expect(r.status).toBe(0)
@@ -80,7 +82,7 @@ describe('setup prompt paths', () => {
     expect(prompt).toContain('PWA installation requires HTTPS')
   })
 })
-describe('pocketbuff command and Freebuff skill', () => {
+posix('pocketbuff command and Freebuff skill', () => {
   const ps1 = fs.readFileSync('site/install.ps1', 'utf8')
   function runIn(home: string, code: string, extra: NodeJS.ProcessEnv = {}) {
     return spawnSync('bash', ['-c', `${shell}\n${code}`, 'installer-test', '--local'], {

@@ -14,7 +14,7 @@ describe('session manager', () => {
     const second = first.create('Two', '/tmp/two')
     expect(first.list()).toHaveLength(2)
     const restored = new SessionManager(file, make, '/tmp/ignored')
-    expect(restored.get(second.id)?.projectDir).toBe('/tmp/two')
+    expect(restored.get(second.id)?.projectDir).toBe(path.resolve('/tmp/two'))
   })
 })
 

@@ -1,0 +1,4 @@
+* text=auto
+*.sh text eol=lf
+site/install.ps1 text eol=lf
+site/install.md text eol=lf
