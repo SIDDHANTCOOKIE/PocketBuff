@@ -19,7 +19,7 @@ describe('pairing codes', () => {
     const dir = tmp(); const { code } = createPairingCode(dir)
     const file = path.join(dir, 'pairing.json')
     expect(fs.readFileSync(file, 'utf8')).not.toContain(code)
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o777).toBe(0o600) // Windows has no POSIX modes
   })
   it('expires', () => {
     const dir = tmp(); const now = Date.now(); const { code } = createPairingCode(dir, now)
