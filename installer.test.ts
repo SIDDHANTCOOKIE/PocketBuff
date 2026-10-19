@@ -80,3 +80,61 @@ describe('setup prompt paths', () => {
     expect(prompt).toContain('PWA installation requires HTTPS')
   })
 })
+describe('pocketbuff command and Freebuff skill', () => {
+  const ps1 = fs.readFileSync('site/install.ps1', 'utf8')
+  function runIn(home: string, code: string, extra: NodeJS.ProcessEnv = {}) {
+    return spawnSync('bash', ['-c', `${shell}\n${code}`, 'installer-test', '--local'], {
+      encoding: 'utf8', env: { ...process.env, POCKETBUFF_HOME: path.join(home, 'ph'), POCKETBUFF_AGENTS_DIR: path.join(home, 'agents'), POCKETBUFF_BIN_DIR: path.join(home, 'bin'), ...extra },
+    })
+  }
+  it('writes the skill and a working shim that defaults to `up`', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pocketbuff-cmd-'))
+    try {
+      const r = runIn(home, 'step_command; finish')
+      expect(r.status).toBe(0)
+      expect(r.stdout).toContain('/skill:pocketbuff')
+      const skill = fs.readFileSync(path.join(home, 'agents/skills/pocketbuff/SKILL.md'), 'utf8')
+      expect(skill).toMatch(/^---\nname: pocketbuff\ndescription: .+\n---/)
+      expect(skill).toContain('pocketbuff up')
+      expect(skill).toContain('Never print or paste `~/.pocketbuff/config.env`')
+      // The shim hands its arguments (or `up`) to the installed script.
+      fs.writeFileSync(path.join(home, 'ph/install.sh'), '#!/usr/bin/env bash\necho "ARGS:$*"\n')
+      expect(spawnSync(path.join(home, 'bin/pocketbuff'), [], { encoding: 'utf8' }).stdout.trim()).toBe('ARGS:up')
+      expect(spawnSync(path.join(home, 'bin/pocketbuff'), ['pair'], { encoding: 'utf8' }).stdout.trim()).toBe('ARGS:pair')
+    } finally { fs.rmSync(home, { recursive: true, force: true }) }
+  })
+  it('`up` starts a stopped service then prints the pairing link', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pocketbuff-up-'))
+    try {
+      fs.mkdirSync(path.join(home, 'ph'), { recursive: true })
+      fs.writeFileSync(path.join(home, 'ph/config.env'), 'PORT=8787\n')
+      const dispatch = installer.split('# ---------- commands ----------')[1]
+      const r = spawnSync('bash', ['-c', `${shell}\nfind_node() { return 0; }; healthy() { return 1; }; step_service() { echo SERVICE_STARTED; }; step_freebuff() { :; }; pair_code() { echo 123456; }\n${dispatch}`, 'installer-test', 'up', '--local'], {
+        encoding: 'utf8', env: { ...process.env, POCKETBUFF_HOME: path.join(home, 'ph') },
+      })
+      expect(r.status).toBe(0)
+      expect(r.stdout).toContain('SERVICE_STARTED')
+      expect(r.stdout).toContain('PAIR_URL http://127.0.0.1:8787/#pair=123456')
+    } finally { fs.rmSync(home, { recursive: true, force: true }) }
+  })
+  it('the skill text is identical in the shell and PowerShell installers', () => {
+    const sh = /<<'SKILL'\n([\s\S]*?)\nSKILL\n/.exec(installer)?.[1]
+    const ps = /\$SkillText = @'\n([\s\S]*?)\n'@/.exec(ps1)?.[1]
+    expect(sh).toBeTruthy()
+    expect(ps).toBe(sh)
+  })
+  it('the Windows command is a .cmd shim added to the user PATH, defaulting to `up`', () => {
+    expect(ps1).toContain("'pocketbuff.cmd'")
+    expect(ps1).toContain('"@echo off')
+    expect(ps1).toContain('PB_ARGS=up')
+    expect(ps1).toContain("SetEnvironmentVariable('Path'")
+    expect(ps1).toContain("'up'        { Invoke-Up }")
+  })
+})
+describe('install guide mentions the command', () => {
+  const prompt = fs.readFileSync('site/install.md', 'utf8')
+  it('documents pocketbuff up and the skill', () => {
+    expect(prompt).toContain('pocketbuff up')
+    expect(prompt).toContain('/skill:pocketbuff')
+  })
+})

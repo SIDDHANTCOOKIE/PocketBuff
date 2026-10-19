@@ -172,16 +172,17 @@ Send the human one message with these parts (fill in the real values, keep it sh
 3. "Then open this link on your phone (or this computer if localhost-only): <PAIR_URL>. It pairs automatically. If it asks for a code, it's <PAIR_CODE> (it works once and expires in 10 minutes)."
 4. For HTTPS links: "Tip: use Share → Add to Home Screen to get it as an app." For local HTTP LAN links, say to use it in the browser; PWA installation requires HTTPS.
 5. "Heads up: free mode gives your account one slot, so use the phone or this terminal, not both at the same time."
-6. "Need a new code later? Ask me, or run `bash ~/.pocketbuff/install.sh pair`."
+6. "Next time you don't need to paste anything: type `/skill:pocketbuff` in Freebuff, or run `pocketbuff up` in any terminal (open a new terminal first on Windows). Need a new code later? `pocketbuff pair`."
 
 ## Maintenance
 
 | Task | Command |
 |---|---|
-| New pairing code | `bash ~/.pocketbuff/install.sh pair` |
-| Health check | `bash ~/.pocketbuff/install.sh doctor` |
+| Start Pocketbuff and get the phone link | `pocketbuff up` (or `/skill:pocketbuff` in Freebuff) |
+| New pairing code | `pocketbuff pair` (same as `bash ~/.pocketbuff/install.sh pair`) |
+| Health check | `pocketbuff doctor` (same as `bash ~/.pocketbuff/install.sh doctor`) |
 | Update to the latest version | run the install command from step 2 again |
 | Remove Pocketbuff | `bash ~/.pocketbuff/install.sh uninstall` (leaves Node, Tailscale and Freebuff installed) |
 | Logs | `~/.pocketbuff/logs/pocketbuff.log` |
 
-On Windows, run the same commands as `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.pocketbuff\install.ps1" <command>`.
+`pocketbuff` works in CMD and PowerShell on Windows once a new terminal window is opened. If it is not found, run the same commands as `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.pocketbuff\install.ps1" <command>`.

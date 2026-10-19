@@ -3,7 +3,8 @@
 #   powershell -ExecutionPolicy Bypass -File install.ps1 --yes
 #   (fetch first: irm https://<site>/install.ps1 -OutFile install.ps1)
 #
-# Commands:  install (default) | doctor | pair | uninstall
+# Commands:  install (default) | up | doctor | pair | uninstall
+#   (after install, `pocketbuff up|pair|doctor` works in CMD and PowerShell)
 # Flags:     --yes            never ask; install what is missing
 #            --project DIR    folder the phone starts in (default: current folder)
 #            -Local | -Tailscale  access mode (saved for later commands)
@@ -404,10 +405,52 @@ function Write-Summary {
     if ((Get-BindHost) -eq '127.0.0.1') { Write-Output 'NOTE This link works on this computer only, not on a phone.' }
   } else { Write-Output 'NOTE The phone needs the Tailscale app, signed in to the same account.' }
   Write-Output 'NOTE Free mode has one slot: the phone and the terminal take turns.'
-  Write-Output "NOTE New code any time: powershell -File $(Join-Path $HomeDir 'install.ps1') pair"
+  Write-Output "NOTE New code any time: pocketbuff pair (or powershell -File $(Join-Path $HomeDir 'install.ps1') pair)"
 }
 
 # ---------- commands ----------
+# ---------- command + Freebuff skill ----------
+# `pocketbuff` on PATH (CMD and PowerShell) and a Freebuff skill (/skill:pocketbuff).
+$AgentsDir = if ($env:POCKETBUFF_AGENTS_DIR) { $env:POCKETBUFF_AGENTS_DIR } else { Join-Path $HOME '.agents' }
+$SkillText = @'
+---
+name: pocketbuff
+description: Start Pocketbuff so the user can continue this Freebuff session from their phone. Use when the user asks to start, open, pair or check Pocketbuff or phone access.
+---
+
+# Pocketbuff
+
+Pocketbuff is already installed on this computer. Do not reinstall it and do not re-read install.md.
+
+1. Run `pocketbuff up` in a terminal. On Windows it works in both CMD and PowerShell. If the command is not found, run `bash ~/.pocketbuff/install.sh up` (Windows: `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.pocketbuff\install.ps1" up`).
+2. Exit code 0: tell the user to open the `PAIR_URL` line on their phone. If it asks for a code, give them `PAIR_CODE` (single use, expires in 10 minutes). Repeat any `NOTE` lines in plain words.
+3. Exit code 10: a `STEP ... HUMAN` line says what the user must do. Tell them exactly that, wait, then run `pocketbuff up` again.
+4. Exit code 1: show the `STEP ... FAIL` line and run `pocketbuff doctor`. Do not retry the same failing step more than once.
+5. Never print or paste `~/.pocketbuff/config.env` or any token. Never use sudo, change firewall settings or Tailscale accounts.
+6. Free mode has one slot, so the phone and this terminal take turns.
+
+Other commands: `pocketbuff pair` (new code), `pocketbuff doctor` (health check).
+'@
+function Step-Command {
+  try {
+    $bin = Join-Path $HomeDir 'bin'
+    New-Item -ItemType Directory -Path $bin -Force | Out-Null
+    $ps1 = Join-Path $HomeDir 'install.ps1'
+    $cmd = "@echo off`r`nset `"PB_ARGS=%*`"`r`nif `"%~1`"==`"`" set `"PB_ARGS=up`"`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"$ps1`" %PB_ARGS%`r`nexit /b %ERRORLEVEL%`r`n"
+    Set-Content -Path (Join-Path $bin 'pocketbuff.cmd') -Value $cmd -Encoding ascii
+    $skillDir = Join-Path $AgentsDir 'skills/pocketbuff'
+    New-Item -ItemType Directory -Path $skillDir -Force | Out-Null
+    Set-Content -Path (Join-Path $skillDir 'SKILL.md') -Value $SkillText -Encoding utf8
+    if ($script:Platform -eq 'windows') {
+      $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+      if (-not (($user -split ';') -contains $bin)) {
+        [Environment]::SetEnvironmentVariable('Path', ((@($user, $bin) | Where-Object { $_ }) -join ';'), 'User')
+      }
+      Step-OK command 'pocketbuff command ready (open a new CMD or PowerShell window to use it). Freebuff skill: /skill:pocketbuff'
+    } else { Step-OK command "pocketbuff.cmd written in $bin (development run, PATH not changed). Freebuff skill: /skill:pocketbuff" }
+  } catch { Step-Fail command "could not set up the pocketbuff command: $($_.Exception.Message)" }
+}
+
 function Invoke-Install {
   $arch = Get-Arch
   if ($script:Platform -ne 'windows' -and -not $env:POCKETBUFF_PLATFORM) {
@@ -422,6 +465,7 @@ function Invoke-Install {
   Step-Config;   if ($script:failed -eq 1) { Finish }
   Step-Service;  if ($script:failed -eq 1) { Finish }
   Step-Freebuff
+  Step-Command;  if ($script:failed -eq 1) { Finish }
   if ((Get-Mode) -eq 'tailscale') {
     Step-Tailscale
     if ($script:human -eq 0 -and $script:failed -eq 0) { Step-Serve }
@@ -464,6 +508,13 @@ function Invoke-Doctor {
   if ($script:failed -eq 0 -and $script:human -eq 0) { Write-Output 'HEALTHY' }
   Finish
 }
+function Invoke-Up {
+  if (-not ((Find-Node) -and ((Get-Mode) -eq 'local' -or (Find-Ts)) -and (Test-Path $Config))) { Write-Output 'STEP up FAIL Pocketbuff is not installed yet; run install first'; exit 1 }
+  if (Test-Healthy) { Step-OK service 'already running' } else { Step-Service }
+  if ($script:failed -eq 0) { Step-Freebuff }
+  if ($script:human -eq 0 -and $script:failed -eq 0) { Write-Summary }
+  Finish
+}
 function Invoke-Pair {
   if ((Find-Node) -and ((Get-Mode) -eq 'local' -or (Find-Ts)) -and (Test-Path $Config)) { Write-Summary; Finish }
   else { Write-Output 'STEP pair FAIL Pocketbuff is not installed yet; run install first'; exit 1 }
@@ -487,6 +538,7 @@ if (-not (Get-Variable -Name PocketBuffNoDispatch -Scope global -ErrorAction Sil
   switch ($Command) {
     'install'   { Invoke-Install }
     'doctor'    { Invoke-Doctor }
+    'up'        { Invoke-Up }
     'pair'      { Invoke-Pair }
     'uninstall' { Invoke-Uninstall }
     default     { [Console]::Error.WriteLine("Unknown argument: $Command (try --help)"); exit 1 }
