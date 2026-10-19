@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 
 const MARKER = '/*freebuff-remote-metadata*/'
 const NEEDLE = '...costMode && { cost_mode: costMode }'
@@ -33,6 +34,7 @@ export function isSdkPatched(dir = sdkDir()) {
   return ['index.mjs', 'index.cjs'].every((file) => fs.readFileSync(path.join(dir, 'dist', file), 'utf8').includes(MARKER))
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare as paths: on Windows import.meta.url is file:///C:/... while argv[1] is C:\..., so a string compare never matches.
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   for (const line of patchSdk(sdkDir())) console.log(`patch-sdk: ${line}`)
 }
